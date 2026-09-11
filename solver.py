@@ -1,31 +1,6 @@
-"""Exact All Portals solver via formulating the problem as the ring star problem and solving that
-with a MILP solver.
-
-AP paths and this solver differ slightly from ring star as they require only a path and not a cycle.
-AP paths additionally can make use of the world spawn point (origin) which technically makes most
-edge weights asymmetrical.
-
-The cycle issue is resolved by using a dummy root as the root that has a cost of 0 but must always
-connect to the real root.
-The edge from the last real node to the dummy root is then just not drawn.
-
-To solve the origin issue the assertion is made that in an optimal solution the origin will only be
-used to connect to the first ring of strongholds.
-The first ring of strongholds are guaranteed to be closer to the origin than to any other
-stronghold.
-This means that the fastest path to a first ring stronghold is always via the origin.
-It also means that the first ring of strongholds will never be assigned to another node because a
-path that assigns them to any other node will always be worse than an identical path that returns
-to the origin at the end and picks up the first ring of strongholds then.
-This means that an optimal solution will always access the first ring via the origin which will cost
-a constant value.
-Since this constant amount does not impact the comparison between solutions it can be treated as 0.
-Because the only time the origin is used is to access the first ring, dummy nodes can be created for
-each first ring stronghold that have a cost of 0 but must always connect to the real stronghold.
-"""
+"""TODO"""
 
 import threading
-import time
 import itertools
 import math
 import json
@@ -35,7 +10,12 @@ from matplotlib.animation import FuncAnimation
 import networkx as nx
 import numpy as np
 import pulp
+import highspy
+import matplotlib
+import signal
+import functools
 import requests
+import argparse
 
 STRONGHOLD_DATA = (
     (3, 1280, 2816),
@@ -50,7 +30,26 @@ STRONGHOLD_DATA = (
 # how much to scale coordinates down by
 SCALE_FACTOR = 16
 # verbose MILP solver output
-VERBOSE = False
+VERBOSE = True
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--threads", type=int, default=16, help="Number of threads to (try to) use"
+)
+parser.add_argument(
+    "--time-limit", type=int, default=30000, help="Solver time limit in seconds"
+)
+# parser.add_argument(
+#     "--player-count", type=int, default=1, help="Number of players"
+# )
+args = parser.parse_args()
+
+THREADS = args.threads
+TIME_LIMIT = args.time_limit
+PLAYER_COUNT = 1
+
+COLORS = colors = matplotlib.cm.Set1(range(20))
+
 
 # simulate AP measurement and prediction of strongholds
 TEST_DATA = False
@@ -110,30 +109,27 @@ for i, (count, minimum, maximum) in enumerate(STRONGHOLD_DATA):
 measured_copy = measured_shs.copy()
 
 # start from the 7th ring measured sh
-all_shs = sum(sh_rings, [measured_shs.pop(-2)])
+all_shs = sum(sh_rings[:-1], [measured_shs.pop(-2)])
+ORIGIN = -1
+ROOT = 1
+FIRST_RING_1 = ROOT + 1
+FIRST_RING_2 = FIRST_RING_1 + 1
 
-# useful constant indexes
-# dummy nodes
-DUMMY_ROOT = 0
-DUMMY_RING_1_1 = DUMMY_ROOT + 1
-DUMMY_RING_1_2 = DUMMY_RING_1_1 + 1
+SEVENTH_RING_IDX = [ROOT] + list(
+    range(len(all_shs) - len(sh_rings[-2]) + ROOT, len(all_shs) + ROOT)
+)
+EIGTH_RING_IDX = range(len(all_shs) + ROOT, len(all_shs) + ROOT + len(sh_rings[-1]))
 
-# 7th ring measured stronghold
-REAL_ROOT = DUMMY_RING_1_2 + 1
+graph = nx.DiGraph()
+for idx, sh in enumerate(all_shs, start=ROOT):
+    graph.add_node(idx, pos=np.array(sh), color="red" if idx == ROOT else "#1f78b4")
 
-# first ring strongholds
-REAL_RING_1_1 = REAL_ROOT + 1
-REAL_RING_1_2 = REAL_RING_1_1 + 1
-
-graph = nx.Graph()
-for idx, sh in enumerate(all_shs, start=REAL_ROOT):
-    graph.add_node(
-        idx, pos=np.array(sh), color="red" if idx == REAL_ROOT else "#1f78b4"
-    )
-
-NODE_COUNT = len(graph.nodes) + REAL_ROOT
-POINTS_IDX = list(range(NODE_COUNT))
+NODE_COUNT = len(graph.nodes)
+POINTS_IDX = list(range(ROOT, NODE_COUNT + ROOT))
+NON_ROOT_POINTS_IDX = POINTS_IDX[1:]
 ALL_ROUTES = [(p1, p2) for p1 in POINTS_IDX for p2 in POINTS_IDX if p1 != p2]
+for idx, sh in enumerate(sh_rings[-1], start=NODE_COUNT + 1):
+    graph.add_node(idx, pos=np.array(sh), color="pink")
 
 for i, measured_sh in enumerate(measured_shs, start=1):
     graph.add_node(-i, pos=np.array(measured_sh), color="red")
@@ -148,317 +144,388 @@ class ComputeThread(threading.Thread):
         self.elapsed_time = 0
         self.iteration = -1
         self.problem = pulp.LpProblem("RingStarProblem", pulp.LpMinimize)
-        # define binary variables x_i_j that equal 1
-        # if and only if the edge i <-> j is part of the cycle
-        self.cycle_vars = {
+
+        # precompute the set of arcs that always prefer travel through the origin
+        self.origin_reset_arcs = set(
+            (point1, point2)
+            for point1 in POINTS_IDX
+            for point2 in NON_ROOT_POINTS_IDX
+            if self.euclidean_distance(point1, point2)
+            > self.euclidean_distance(ORIGIN, point2)
+            and point1 != point2
+        )
+        self.unassigned_7th_ring_strongholds = {
+            eigth: min(
+                (seventh for seventh in itertools.chain(SEVENTH_RING_IDX, (ROOT,))),
+                key=functools.partial(self.euclidean_distance, pos2=eigth),
+            )
+            for eigth in EIGTH_RING_IDX
+        }
+        # special case for when there is only one player, origin resetting assumption should hold
+        if PLAYER_COUNT == 1:
+            self.origin_reset_arcs = set(
+                (point1, first_ring_stronghold)
+                for point1 in POINTS_IDX
+                for first_ring_stronghold in (FIRST_RING_1, FIRST_RING_2)
+                if point1 != first_ring_stronghold
+            )
+
+        # $A$ is the set of all arcs
+        # $c_{ij}$ is the cost of arc $(i,j)$ (self.arc_cost(i, j))
+        # $m$ is the number of travelers (the number of paths, PLAYER_COUNT)
+        # $x_{ij}$ is a binary variable equal to 1 iff arc $(i,j)$ is in a path in the solution
+        self.arc_var = {
             point1: {
                 point2: pulp.LpVariable(f"x_{point1}_{point2}", cat=pulp.LpBinary)
-                for point2 in POINTS_IDX[point1 + 1 :]
+                for point2 in POINTS_IDX
+                if point1 != point2
             }
             for point1 in POINTS_IDX
         }
-        # define binary variables y_i_j that equal 1
-        # if and only if the node v_i is assigned to the node v_j as an arm
-        # for only nodes v_i on the cycle y_i_i == 1 i.e. the node is assigned to itself
-        self.assignment_vars = {
+        # $y_{ij}$ is a binary variable equal to 1 iff arc $(i,j)$ is an assignment in the solution
+        self.assignment_var = {
             point1: {
                 point2: pulp.LpVariable(f"y_{point1}_{point2}", cat=pulp.LpBinary)
                 for point2 in POINTS_IDX
+                if point1 != point2
             }
             for point1 in POINTS_IDX
         }
+        self.node_type_var = {
+            point: pulp.LpVariable(f"z_{point}", cat=pulp.LpBinary)
+            for point in POINTS_IDX
+        }
+        # $u_i$ is the number of nodes visited on a traveler's path before visiting node $i$
+        self.path_length_var = {
+            point: pulp.LpVariable(f"u_{point}", lowBound=0, cat=pulp.LpContinuous)
+            for point in POINTS_IDX
+        }
+        # $L$ is the maximum number of nodes a traveler can visit (maximum path length)
+        # self.maximum_path_length = len(POINTS_IDX) - 1
+        self.maximum_path_length = (len(POINTS_IDX) - 1) // PLAYER_COUNT
+        # $K$ is the minimum number of nodes a traveler must visit (minimum path length)
+        # self.minimum_path_length = max((len(POINTS_IDX) - 1) // (PLAYER_COUNT + 1), 4)
+        self.minimum_path_length = 4
+        M_LARGE = self.maximum_path_length
+        M_SMALL = ROOT + 1
 
-        # enforce that each node has exactly 2 cycle connections
-        # if and only if that node is on the cycle
-        # and otherwise has 0 cycle connections
-        for point1 in POINTS_IDX:
+        assert (
+            2 <= self.minimum_path_length <= len(POINTS_IDX) // PLAYER_COUNT
+        ), f"Minimum path length must be between 2 and {len(POINTS_IDX) // PLAYER_COUNT}"
+        assert self.minimum_path_length <= self.maximum_path_length
+
+        # minimize $$\sum_{(i,j) \in A}c_{ij}(x_{ij}+y_{ij})$$
+
+        self.problem += pulp.lpSum(
+            self.arc_cost(point1, point2)
+            * (self.arc_var[point1][point2] + self.assignment_var[point1][point2])
+            for point1, point2 in ALL_ROUTES
+        )
+
+        # such that
+
+        # - $\sum_{j=2}^{n}x_{1j}=m$
+
+        self.problem += (
+            pulp.lpSum(self.arc_var[ROOT][point] for point in NON_ROOT_POINTS_IDX)
+            == PLAYER_COUNT
+        )
+
+        # - $\sum_{j=2}^{n}x_{j1}=m$
+
+        self.problem += (
+            pulp.lpSum(self.arc_var[point][ROOT] for point in NON_ROOT_POINTS_IDX)
+            == PLAYER_COUNT
+        )
+
+        for origin_reset_arc in self.origin_reset_arcs:
             self.problem += (
-                pulp.lpSum(
-                    self.cycle_vars[min(point1, point2)][max(point1, point2)]
-                    for point2 in POINTS_IDX
-                    if point2 != point1
-                )
-                == 2 * self.assignment_vars[point1][point1]
+                self.assignment_var[origin_reset_arc[0]][origin_reset_arc[1]] == 0
             )
 
-        # enforce that every real node is assigned to exactly 1 other node
-        # this means nodes on the cycle cannot be assigned to any other nodes
-        # (they are assigned to themselves)
-        # and that nodes external to the cycle are only assigned to 1 other node
-        for point1 in POINTS_IDX[REAL_ROOT:]:
+        for (
+            unassigned_7th_ring_stronghold
+        ) in self.unassigned_7th_ring_strongholds.values():
+            if unassigned_7th_ring_stronghold == ROOT:
+                continue
+            self.problem += self.node_type_var[unassigned_7th_ring_stronghold] == 1
+
+        # - $\sum_{i=1}^{n}x_{ij}+y_{ij}=1, j=2,...,n$
+
+        for point2 in NON_ROOT_POINTS_IDX:
             self.problem += (
                 pulp.lpSum(
-                    self.assignment_vars[point1][point2] for point2 in POINTS_IDX
+                    self.arc_var[point1][point2] + self.assignment_var[point1][point2]
+                    for point1 in POINTS_IDX
+                    if point1 != point2
                 )
                 == 1
             )
 
-        # enforce that the first node and the dummy nodes are only assigned to themselves
-        # (root is always on the cycle)
-        self.problem += self.assignment_vars[DUMMY_ROOT][DUMMY_ROOT] == 1
-        self.problem += self.assignment_vars[DUMMY_RING_1_1][DUMMY_RING_1_1] == 1
-        self.problem += self.assignment_vars[DUMMY_RING_1_2][DUMMY_RING_1_2] == 1
-
-        # dummy nodes & the root are implicitly never going to be assigned to other nodes
-        # but this can be an added condition here if it helps solving
-
-        # enforce that nothing is ever assigned to the dummy nodes
-        for point in POINTS_IDX[REAL_ROOT:]:
-            for dummy_point in (DUMMY_ROOT, DUMMY_RING_1_1, DUMMY_RING_1_2):
-                self.problem += self.assignment_vars[point][dummy_point] == 0
-
-        # enforce that the first ring nodes cannot connect to each other
-        self.problem += self.cycle_vars[REAL_RING_1_1][REAL_RING_1_2] == 0
-        self.problem += self.cycle_vars[DUMMY_RING_1_1][REAL_RING_1_2] == 0
-        self.problem += self.cycle_vars[DUMMY_RING_1_2][REAL_RING_1_1] == 0
-
-        # enforce that the fake nodes always connect to their real counterpart
-        self.problem += self.cycle_vars[DUMMY_ROOT][REAL_ROOT] == 1
-        self.problem += self.cycle_vars[DUMMY_RING_1_1][REAL_RING_1_1] == 1
-        self.problem += self.cycle_vars[DUMMY_RING_1_2][REAL_RING_1_2] == 1
-
-        # define the objective function
-        # minimize the sum of the distances between all edges on the cycle (cycle length)
-        # and the sum of the distances between all edges assigned to those on the cycle
-        # from their assigned cycle node (total arm length)
-        self.problem += pulp.lpSum(
-            self.euclidean_distance(point1, point2) * self.cycle_vars[point1][point2]
-            for point1 in POINTS_IDX
-            for point2 in POINTS_IDX[point1 + 1 :]
-        ) + pulp.lpSum(
-            self.euclidean_distance(point1, point2)
-            * self.assignment_vars[point1][point2]
-            for point1 in POINTS_IDX
-            for point2 in POINTS_IDX
-            if point2 != point1
-        )
-        self.running = True
-
-    def delta_edges(self, set_of_points):
-        """Defines the set of all undirected edges between all points within the set
-        and all points outside of the set"""
-        for point1 in set_of_points:
-            for point2 in POINTS_IDX:
-                if point2 not in set_of_points:
-                    yield point1, point2
-
-    def euclidean_distance(self, point1_index, point2_index):
-        """Euclidean distance between two points"""
-        # dummy points are always free
-        if point1_index < REAL_ROOT or point2_index < REAL_ROOT:
-            return 0
-        return np.sqrt(
-            np.sum(
-                (
-                    self.graph.nodes[point1_index]["pos"]
-                    - self.graph.nodes[point2_index]["pos"]
+        for point2 in NON_ROOT_POINTS_IDX:
+            self.problem += (
+                pulp.lpSum(
+                    self.assignment_var[point1][point2]
+                    for point1 in POINTS_IDX
+                    if point1 != point2
                 )
-                ** 2
+                == 1 - self.node_type_var[point2]
             )
+
+        # - $\sum_{j=1}^{n}x_{ij} = z_i, i=2,...,n$
+
+        for point1 in NON_ROOT_POINTS_IDX:
+            self.problem += (
+                pulp.lpSum(
+                    self.arc_var[point1][point2]
+                    for point2 in POINTS_IDX
+                    if point1 != point2
+                )
+                == self.node_type_var[point1]
+            )
+
+        for point1 in POINTS_IDX:
+            self.problem += (
+                pulp.lpSum(
+                    self.assignment_var[point1][point2]
+                    for point2 in POINTS_IDX
+                    if point1 != point2
+                )
+                <= self.node_type_var[point1] * M_LARGE
+            )
+
+        # - $u_i + (L - 2)x_{1i} - x_{i1} \leq L - 1, i=2,...,n$
+        for point in NON_ROOT_POINTS_IDX:
+            self.problem += (
+                self.path_length_var[point]
+                + (self.maximum_path_length - ROOT - 1) * self.arc_var[ROOT][point]
+                - self.arc_var[point][ROOT]
+            ) <= self.maximum_path_length - ROOT
+        # - $u_i + x_{1i} + (2-K)x_{i1} \geq 2, i=2,...,n$
+        for point in NON_ROOT_POINTS_IDX:
+            self.problem += (
+                self.path_length_var[point]
+                + self.arc_var[ROOT][point]
+                + (2 - self.minimum_path_length) * self.arc_var[point][ROOT]
+            ) >= ROOT + 1
+        assert self.minimum_path_length >= 4
+        # $K=2,3$
+        # if self.minimum_path_length < 4:
+        #     # - $x_{1i} + x_{i1} \leq 1, i=2,...,n$
+        #     for point in NON_ROOT_POINTS_IDX:
+        #         self.problem += (
+        #             self.arc_var[ROOT][point] + self.arc_var[point][ROOT] <= 1
+        #         )
+        # - $u_i - u_j + Lx_{ij} + (L-2)x_{ji} \leq L-1, 2 \leq i \neq j \leq n$
+        for point1 in NON_ROOT_POINTS_IDX:
+            for point2 in NON_ROOT_POINTS_IDX:
+                if point1 == point2:
+                    continue
+                self.problem += (
+                    self.path_length_var[point1]
+                    - self.path_length_var[point2]
+                    + self.maximum_path_length * self.arc_var[point1][point2]
+                    + (self.maximum_path_length - ROOT - 1)
+                    * self.arc_var[point2][point1]
+                ) <= self.maximum_path_length - ROOT + M_LARGE * (
+                    self.assignment_var[point1][point2]
+                )
+        # - $x_{ij} \in \{0,1\}, \forall (i,j) \in A$ (LpBinary)
+
+        self.running = True
+        self.upper_bound = float("inf")
+        self.lower_bound = 0
+        self.gap = 1
+        self.node_count = 0
+
+    def pos(self, point_index):
+        """Position of a point"""
+        if point_index == ORIGIN:
+            return np.array((0, 0))
+        return self.graph.nodes[point_index]["pos"]
+
+    def euclidean_distance(self, pos1, pos2):
+        """Euclidean distance between two points"""
+        if isinstance(pos1, int):
+            pos1 = self.pos(pos1)
+        if isinstance(pos2, int):
+            pos2 = self.pos(pos2)
+        return np.sqrt(np.sum((pos1 - pos2) ** 2))
+
+    def arc_cost(self, point1_index, point2_index):
+        """Real travel cost between two points"""
+        # root is always free to return to to reduce a path to a cycle
+        if point2_index == ROOT:
+            return 0
+        # special case for when there is only one player
+        # only allow origin resetting optimization for the first ring
+        if PLAYER_COUNT == 1:
+            if point2_index in (FIRST_RING_1, FIRST_RING_2):
+                return self.euclidean_distance(ORIGIN, point2_index)
+            return self.euclidean_distance(point1_index, point2_index)
+        # minimum of direct travel and origin reset travel
+        return min(
+            self.euclidean_distance(
+                point1_index,
+                point2_index,
+            ),
+            self.euclidean_distance(ORIGIN, point2_index),
         )
+
+    def update_solution(self, solution_vector: np.ndarray | None = None):
+        solution = {}
+        if solution_vector is not None:
+            for var, value in zip(self.problem.variables(), solution_vector):
+                solution[var] = value
+
+        self.graph.clear_edges()
+
+        def arc_var(point1, point2):
+            if solution_vector is None:
+                val = self.arc_var[point1][point2].value()
+                assert val is not None
+                return round(val)
+            else:
+                return round(solution[self.arc_var[point1][point2]])
+
+        def assignment_var(point1, point2):
+            if solution_vector is None:
+                val = self.assignment_var[point1][point2].value()
+                assert val is not None
+                return round(val)
+            else:
+                return round(solution[self.assignment_var[point1][point2]])
+
+        route_count = 0
+        unvisited = NON_ROOT_POINTS_IDX.copy()
+
+        for eigth_ring, seventh_ring in self.unassigned_7th_ring_strongholds.items():
+            self.graph.add_edge(
+                seventh_ring,
+                eigth_ring,
+                color="red",
+                thickness=2,
+            )
+
+        assignments = {v: [k] for k, v in self.unassigned_7th_ring_strongholds.items()}
+        for point1 in POINTS_IDX:
+            temp = unvisited.copy()
+            for point2 in temp:
+                if point1 == point2:
+                    continue
+                if assignment_var(point1, point2) == 1:
+                    assert arc_var(point1, point2) != 1
+                    if point1 not in assignments:
+                        assignments[point1] = []
+                    assignments[point1].append(point2)
+                    self.graph.add_edge(point1, point2, color="red", thickness=2)
+                    unvisited.remove(point2)
+                if arc_var(point1, point2) == 1:
+                    assert assignment_var(point1, point2) != 1
+        base_path = [ROOT]
+        for first_point in NON_ROOT_POINTS_IDX:
+            if arc_var(ROOT, first_point) == 1:
+                route_count += 1
+                color = COLORS[route_count]
+                # don't draw origin resets
+                if (ROOT, first_point) not in self.origin_reset_arcs:
+                    self.graph.add_edge(ROOT, first_point, color=color, thickness=2)
+                unvisited.remove(first_point)
+                base_path.append(first_point)
+                complete = False
+                while not complete:
+                    for point in itertools.chain(unvisited, (ROOT,)):
+                        if arc_var(first_point, point) == 1:
+                            if point == ROOT:
+                                complete = True
+                            else:
+                                # don't draw origin resets
+                                if (first_point, point) not in self.origin_reset_arcs:
+                                    self.graph.add_edge(
+                                        first_point, point, color=color, thickness=2
+                                    )
+                                unvisited.remove(point)
+                                base_path.append(point)
+                                first_point = point
+                            break
+                    else:
+                        assert False
+        assert route_count == PLAYER_COUNT
+        assert len(unvisited) == 0
+
+        path = []
+        base_path_iter = iter(base_path)
+        while True:
+            node = next(base_path_iter, None)
+            if node is None:
+                break
+            if node in (FIRST_RING_1, FIRST_RING_2):
+                path.append(["origin", node - 1])
+            elif node == 0:
+                continue
+            else:
+                path.append(["goto", node - 1])
+            for assigned_node in assignments.get(node, []):
+                path.append(["reset", assigned_node - 1])
+
+        data = {
+            "message": json.dumps(
+                {
+                    "type": "path",
+                    "paths": [path],
+                    "measured": measured_copy,
+                    "message": f"iteration: {self.iteration}\n{self.elapsed_time:.2f} seconds elapsed",
+                }
+            )
+        }
+        print(data)
+
+        requests.post("http://localhost:5002/message", data=data, timeout=1)
+
+        print(self)
+
+    def __str__(self) -> str:
+        return (
+            f"Iteration: {self.iteration}"
+            f" | {self.elapsed_time:.2f} seconds elapsed"
+            f" | Upper bound: {self.upper_bound:.2f}"
+            f" | Lower bound: {self.lower_bound:.2f}"
+            f" | Gap: {self.gap * 100:.2f}%"
+            f" | Node count: {self.node_count}"
+            f" | State: {'Solving' if self.running else 'Solved'}"
+        )
+
+    def highs_callback(self, callback_type, message, data_out, data_in, user_data):
+        """Generic HiGHS callback handler"""
+        if callback_type == highspy.cb.HighsCallbackType.kCallbackMipSolution:
+            self.update_solution(data_out.mip_solution)
+        if callback_type == highspy.cb.HighsCallbackType.kCallbackMipLogging:
+            self.upper_bound = data_out.mip_primal_bound
+            self.lower_bound = data_out.mip_dual_bound
+            self.gap = data_out.mip_gap
+            self.node_count = data_out.mip_node_count
+            self.elapsed_time = data_out.running_time
+            self.iteration += 1
+        if callback_type == highspy.cb.HighsCallbackType.kCallbackMipInterrupt:
+            if not self.running:
+                data_in.user_interrupt = True
 
     def run(self):
-        start_time = time.time()
-        last_solution = None
-        while self.running:
-            self.problem.solve(pulp.PULP_CBC_CMD(msg=VERBOSE))
-            self.graph.clear_edges()
-            cycle_edges = {}
-            assignments = {}
-            for point1 in POINTS_IDX:
-                for point2 in POINTS_IDX[point1 + 1 :]:
-                    if self.cycle_vars[point1][point2].value() == 1:
-                        cycle_edges[point1] = cycle_edges.get(point1, []) + [point2]
-                        cycle_edges[point2] = cycle_edges.get(point2, []) + [point1]
-                        p1 = point1
-                        p2 = point2
-
-                        # if it is real draw it thick
-                        # if it is not a real edge then draw it lightly
-                        thickness = 5
-                        if p1 == DUMMY_ROOT:
-                            p1 = REAL_ROOT
-                            thickness = 0.5
-                        elif p1 == DUMMY_RING_1_1:
-                            p1 = REAL_RING_1_1
-                            thickness = 0.5
-                        elif p1 == DUMMY_RING_1_2:
-                            p1 = REAL_RING_1_2
-                            thickness = 0.5
-                        if p2 == DUMMY_ROOT:
-                            p2 = REAL_ROOT
-                            thickness = 0.5
-                        elif p2 == DUMMY_RING_1_1:
-                            p2 = REAL_RING_1_1
-                            thickness = 0.5
-                        elif p2 == DUMMY_RING_1_2:
-                            p2 = REAL_RING_1_2
-                            thickness = 0.5
-
-                        if p1 != p2:
-                            self.graph.add_edge(p1, p2, thickness=thickness)
-            for point1 in POINTS_IDX:
-                for point2 in POINTS_IDX:
-                    if self.assignment_vars[point1][point2].value() == 1:
-                        if point1 != point2:
-                            self.graph.add_edge(point1, point2)
-                        assignments[point1] = point2
-            # find all subcycles including the nodes assigned to them
-            unvisited_nodes = set(POINTS_IDX)
-            cycles = []
-            while cycle_edges:
-                start = list(cycle_edges.keys())[0]
-                cycle = [start]
-                cycle_assignments = []
-                while True:
-                    unvisited_nodes.discard(cycle[-1])
-                    for assigned_node, assigned_to_node in assignments.items():
-                        if assigned_node == assigned_to_node:
-                            continue
-                        if assigned_to_node == cycle[-1]:
-                            unvisited_nodes.discard(assigned_node)
-                            cycle_assignments.append(assigned_node)
-                    connected_edges = cycle_edges.pop(cycle[-1])
-                    next_point = next(
-                        (p for p in connected_edges if p not in cycle), start
-                    )
-                    cycle.append(next_point)
-                    if next_point == start:
-                        break
-                cycles.append((cycle, cycle_assignments))
-            # nodes that arent assigned to a cycle node can be considered on their own
-            for node in unvisited_nodes:
-                cycles.append(([], [node, assignments[node]]))
-            # validate directionality of dummy & real nodes
-            invalid_paths = []
-            all_paths_valid = True
-            for cycle_, _ in cycles:
-                for start, end in (
-                    ((REAL_RING_1_1, DUMMY_RING_1_1), (DUMMY_RING_1_2, REAL_RING_1_2)),
-                    ((REAL_RING_1_1, DUMMY_RING_1_1), (DUMMY_ROOT, REAL_ROOT)),
-                    ((REAL_RING_1_2, DUMMY_RING_1_2), (DUMMY_ROOT, REAL_ROOT)),
-                ):
-                    if start[0] not in cycle_ or end[0] not in cycle_:
-                        continue
-                    path_is_valid = False
-                    cycle = itertools.cycle(cycle_)
-                    invalid_path = [start[0]]
-                    for point in cycle:
-                        if point == start[0]:
-                            break
-                    search_point = end[0]
-                    invalid_point = end[1]
-                    # dummy and real nodes must alternate throughout the cycle
-                    # D1->R1->...->D2->R2 is valid
-                    # D1->R1->...->R2->D2 is invalid
-                    # R1->D1->...->D2->R2 is invalid
-                    # R1->D1->...->R2->D2 is valid
-                    for point in cycle:
-                        invalid_path.append(point)
-                        if point == start[1]:
-                            invalid_path = [start[1]]
-                            search_point = end[1]
-                            invalid_point = end[0]
-                        elif point == invalid_point:
-                            path_is_valid = False
-                            break
-                        elif point == search_point:
-                            path_is_valid = True
-                            break
-                    if not path_is_valid:
-                        all_paths_valid = False
-                        invalid_paths.append(invalid_path)
-                        # lazily apply invalidation constraint
-                        # TODO: is this constraint optimal/always correct
-                        # it is essentially trying to invalidate the specific group of nodes from
-                        # forming a contiguous path by requiring > 2 delta edges
-                        self.problem += (
-                            pulp.lpSum(
-                                self.cycle_vars[min(point1, point2)][
-                                    max(point1, point2)
-                                ]
-                                for point1, point2 in self.delta_edges(
-                                    set(invalid_path)
-                                )
-                            )
-                            >= 3
-                        )
-            # if there is only one cycle & it is valid then an optimal solution has been found
-            # and we can stop
-            if len(cycles) == 1:
-                print("Found single cycle solution")
-                if all_paths_valid:
-                    print("Found valid single cycle solution")
-                    self.running = False
-                else:
-                    print(f"Invalid due to {invalid_paths=}")
-
-            # lazily apply the subcycle elimination constraints on every subcycle found
-            for cycle, raw_assignments in cycles:
-                if DUMMY_ROOT in cycle:
-                    continue
-                subcycle_set = set(cycle) | set(raw_assignments)
-                for v_i in subcycle_set:
-                    self.problem += pulp.lpSum(
-                        self.cycle_vars[min(point1, point2)][max(point1, point2)]
-                        for point1, point2 in self.delta_edges(subcycle_set)
-                    ) >= 2 * pulp.lpSum(
-                        self.assignment_vars[v_i][v_j] for v_j in subcycle_set
-                    )
-            self.elapsed_time = time.time() - start_time
-            self.iteration += 1
-            print(
-                f"Iteration: {self.iteration}"
-                f" | {self.elapsed_time:.2f} seconds elapsed"
-                f" | State: {'Solving' if self.running else 'Solved'}"
+        self.problem.solve(
+            pulp.HiGHS(
+                threads=THREADS,
+                gapRel=0,
+                callbackTuple=(self.highs_callback, None),
+                callbacksToActivate=[
+                    highspy.cb.HighsCallbackType.kCallbackMipSolution,
+                    highspy.cb.HighsCallbackType.kCallbackMipLogging,
+                    highspy.cb.HighsCallbackType.kCallbackMipInterrupt,
+                ],
+                timeLimit=TIME_LIMIT,
+                msg=VERBOSE,
             )
-            if self.running and cycles == last_solution:
-                print("ERROR: No new solution despite new constraints")
-                self.running = False
-            last_solution = cycles
-
-            paths = []
-            path_assignments = {}
-            for node in graph.nodes:
-                parent = assignments.get(node, node)
-                if parent == node:
-                    continue
-                if parent not in path_assignments:
-                    path_assignments[parent] = []
-                path_assignments[parent].append(node)
-            for cycle, _ in cycles:
-                path = []
-                cycle_iter = iter(cycle)
-                while True:
-                    node = next(cycle_iter, None)
-                    if node is None:
-                        break
-                    if node in (1, 2):
-                        after_origin = next(cycle_iter, None)
-                        if after_origin is None:
-                            break
-                        path.append(["origin", after_origin - 3])
-                    elif node == 0:
-                        continue
-                    else:
-                        path.append(["goto", node - 3])
-                    for assigned_node in path_assignments.get(node, []):
-                        path.append(["reset", assigned_node - 3])
-                paths.append(path)
-
-            data = {
-                "message": json.dumps(
-                    {
-                        "type": "path",
-                        "paths": [path for path in paths],
-                        "measured": measured_copy,
-                        "message": f"iteration: {self.iteration}\n{self.elapsed_time:.2f} seconds elapsed",
-                    }
-                )
-            }
-            print(data)
-
-            requests.post("http://localhost:5002/message", data=data, timeout=1)
+        )
+        self.update_solution()
         data = {
             "message": json.dumps(
                 {
@@ -468,9 +535,21 @@ class ComputeThread(threading.Thread):
         }
         print(data)
         requests.post("http://localhost:5002/message", data=data, timeout=1)
+        self.running = False
 
 
 compute_thread = ComputeThread(graph)
+
+
+def sigint_handler(_, __):
+    """Ctrl+C handler"""
+    print("Exiting...")
+    compute_thread.running = False
+    compute_thread.join()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, sigint_handler)
 compute_thread.start()
 
 
@@ -479,18 +558,16 @@ def draw_graph(_):
     plt.gca().clear()
     edge_thickness = [graph[u][v].get("thickness", 1) for u, v in graph.edges]
     node_colors = [graph.nodes[node].get("color", "#1f78b4") for node in graph.nodes]
+    edge_colors = [graph[u][v].get("color", "#1f78b4") for u, v in graph.edges]
     nx.draw(
         graph,
         pos=nx.get_node_attributes(graph, "pos"),
         node_color=node_colors,
+        edge_color=edge_colors,
         width=edge_thickness,
         with_labels=True,
     )
-    plt.title(
-        f"Iteration: {compute_thread.iteration}"
-        f" | {compute_thread.elapsed_time:.2f} seconds elapsed"
-        f" | State: {'Solving' if compute_thread.running else 'Solved'}"
-    )
+    plt.title(str(compute_thread))
     plt.axis("equal")
 
 
