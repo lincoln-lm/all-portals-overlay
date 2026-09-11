@@ -140,16 +140,22 @@
             if (progress >= PATHS[0].length - 1) {
                 return "Complete!";
             }
+
             const [type, i] = PATHS[0][progress + 1];
-            const [last_type, last_i] = PATHS[0][progress];
+            let previous_progress = progress;
+            let [last_type, last_i] = PATHS[0][previous_progress];
+            while (last_type == 'reset') {
+                previous_progress--;
+                [last_type, last_i] = PATHS[0][previous_progress];
+            }
             let [x, y] = i == 0 ? MEASURED[MEASURED.length - 2] : strongholds[i - 1];
             let [last_x, last_y] = last_i == 0 ? MEASURED[MEASURED.length - 2] : strongholds[last_i - 1];
-            x = Math.round(x / 128);
-            y = Math.round(y / 128);
-            last_x = Math.round(last_x / 128);
-            last_y = Math.round(last_y / 128);
-            let deltaX = last_x - x;
-            let deltaZ = last_y - y;
+            if (type == 'origin') {
+                [last_x, last_y] = [0, 0];
+            }
+            [x, y] = [Math.round(x / 128), Math.round(y / 128)];
+            [last_x, last_y] = [Math.round(last_x / 128), Math.round(last_y / 128)];
+            let [deltaX, deltaZ] = [last_x - x, last_y - y];
 
             let theta = (Math.atan2(deltaZ, deltaX) * 180 / Math.PI + 90) % 360;
             if (theta > 180) {
