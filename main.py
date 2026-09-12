@@ -2,6 +2,7 @@ from collections import deque
 import threading
 import os
 import time
+import platform
 from flask import Flask, Response, render_template, request
 
 
@@ -11,9 +12,13 @@ class App:
         self.app = Flask(__name__)
         self.new_message = threading.Condition()
         self.messages = deque()
-        self.monitor_thread = threading.Thread(target=self.monitor_parent, daemon=True)
-        self.monitor_thread.start()
+        if platform.system() == "Linux":
+            self.monitor_thread = threading.Thread(
+                target=self.monitor_parent, daemon=True
+            )
+            self.monitor_thread.start()
         self.app.route("/", methods=["GET"])(self.page)
+        self.app.route("/buttons", methods=["GET"])(self.button_page)
         self.app.route("/data")(self.event_stream)
         self.app.route("/message", methods=["POST"])(self.receive_message)
         self.app.run(host="0.0.0.0", port=5002)
@@ -28,6 +33,9 @@ class App:
 
     def page(self):
         return render_template("index.html")
+
+    def button_page(self):
+        return render_template("buttons.html")
 
     def receive_message(self):
         with self.new_message:
