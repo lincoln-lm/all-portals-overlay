@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <button type="button" onclick="sendMessage('next')">Next</button>
+    <button type="button" onclick="sendMessage('prev')">Previous</button>
+    <button type="button" onclick="sendMessage('reset')">Reset</button>
+
+    <script>
+        function sendMessage(type) {
+            fetch('/message', {
+                method: 'POST',
+                body: new URLSearchParams({
+                    message: JSON.stringify({ type })
+                })
+            });
+        }
+    </script>
+</body>
+
+</html>
