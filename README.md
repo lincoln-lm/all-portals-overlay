@@ -54,3 +54,5 @@ Ex.
 4. Run ``solver.py`` specifying how many threads you want to give it (this will likely be a high upper bound, as it will not be able to use a large amount of threads at once) and a time limit in seconds. If either are not specified, they will default to 16 threads and 30000 seconds. ``uv run solver.py --threads 16 --time-limit 3600``. The overlay should periodically update with the current best path until it is fully solved or the time limit is reached.
 
 5. Once the solver is complete, you can close the networkx window opened by the solver and the overlay should tell you the first step and be functional.
+
+A backup of the solved path is stored in the current directory as ``backup_{timestamp}.json``. The backup can be utilized by running ``solver.py`` with the ``--from-backup`` argument ``uv run solver.py --from-backup backup_2026-09-21_22-27-03.json``

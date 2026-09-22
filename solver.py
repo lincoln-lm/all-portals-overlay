@@ -13,6 +13,7 @@ import pulp
 import highspy
 import matplotlib
 import signal
+import datetime
 import functools
 import requests
 import argparse
@@ -39,20 +40,39 @@ parser.add_argument(
 parser.add_argument(
     "--time-limit", type=int, default=30000, help="Solver time limit in seconds"
 )
-# parser.add_argument(
-#     "--player-count", type=int, default=1, help="Number of players"
-# )
+parser.add_argument(
+    "--from-backup", type=pathlib.Path, default=None, help="Load from backup file"
+)
+parser.add_argument(
+    "--test", action="store_true", help="Use test data instead of strongholds.json"
+)
+parser.add_argument("--player-count", type=int, default=1, help="Number of players")
 args = parser.parse_args()
+
+if args.from_backup:
+    data = json.loads(args.from_backup.read_text())
+    print(data)
+    requests.post("http://localhost:5002/message", data=data, timeout=1)
+    data = {
+        "message": json.dumps(
+            {
+                "type": "solved",
+            }
+        )
+    }
+    print(data)
+    requests.post("http://localhost:5002/message", data=data, timeout=1)
+    exit(0)
 
 THREADS = args.threads
 TIME_LIMIT = args.time_limit
-PLAYER_COUNT = 1
+PLAYER_COUNT = args.player_count
 
 COLORS = colors = matplotlib.cm.Set1(range(20))
 
 
 # simulate AP measurement and prediction of strongholds
-TEST_DATA = False
+TEST_DATA = args.test
 
 if TEST_DATA:
     seed = np.random.randint(2**30)
@@ -478,6 +498,8 @@ class ComputeThread(threading.Thread):
                 }
             )
         }
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        pathlib.Path(f"backup_{timestamp}.json").write_text(json.dumps(data), "utf-8")
         print(data)
 
         requests.post("http://localhost:5002/message", data=data, timeout=1)
