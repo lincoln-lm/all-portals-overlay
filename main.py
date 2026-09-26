@@ -2,6 +2,7 @@ from collections import deque
 import threading
 import os
 import time
+import json
 import platform
 from flask import Flask, Response, render_template, request
 
@@ -11,7 +12,8 @@ class App:
         self.parent_pid = os.getppid()
         self.app = Flask(__name__)
         self.new_message = threading.Condition()
-        self.messages = deque()
+        self.message_history = []
+        self.subscribers = []
         if platform.system() == "Linux":
             self.monitor_thread = threading.Thread(
                 target=self.monitor_parent, daemon=True
@@ -39,19 +41,29 @@ class App:
 
     def receive_message(self):
         with self.new_message:
-            self.messages.append(
-                request.args.get("message") or request.form.get("message")
-            )
+            message = request.args.get("message") or request.form.get("message")
+            self.message_history.append(message)
+            if json.loads(message)["type"] == "reset":
+                self.message_history.clear()
+            for subscriber in self.subscribers:
+                subscriber.append(message)
             self.new_message.notify_all()
         return ""
 
     def event_stream(self):
+        subscriber_id = len(self.subscribers)
+        self.subscribers.append(deque())
+        if self.message_history:
+            with self.new_message:
+                self.subscribers[subscriber_id].extend(self.message_history)
+                self.new_message.notify_all()
+
         def stream():
             while True:
                 with self.new_message:
-                    for message in self.messages:
+                    for message in self.subscribers[subscriber_id]:
                         yield f"data: {message}\n\n"
-                    self.messages.clear()
+                    self.subscribers[subscriber_id].clear()
                     self.new_message.wait()
 
         return Response(stream(), mimetype="text/event-stream")
