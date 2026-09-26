@@ -172,15 +172,17 @@
                     message = `Take bed and go to (${x}, ${y})\n(don't set spawn)\n${theta.toFixed(1)}`;
                 }
             }
-            if (type == 'goto') {
-                message = `Take bed and go to (${x}, ${y})\n${theta.toFixed(1)}`;
-            } else if (type == 'reset') {
-                message = `Leave bed and go to (${x}, ${y})\n${theta.toFixed(1)}`;
-            } else if (type == 'origin') {
-                message = `Take bed and go to (${x}, ${y})\n${theta.toFixed(1)}`;
-            }
-            if (progress == PATHS[0].length - 2) {
-                message += "\nDo not go through the fountain!";
+            if (message == '') {
+                if (type == 'goto') {
+                    message = `Take bed and go to (${x}, ${y})\n${theta.toFixed(1)}`;
+                } else if (type == 'reset') {
+                    message = `Leave bed and go to (${x}, ${y})\n${theta.toFixed(1)}`;
+                } else if (type == 'origin') {
+                    message = `Take bed and go to (${x}, ${y})\n${theta.toFixed(1)}`;
+                }
+                if (progress == PATHS[0].length - 2) {
+                    message += "\nDo not go through the fountain!";
+                }
             }
             return message;
         }
