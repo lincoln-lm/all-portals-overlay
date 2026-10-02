@@ -1,0 +1,55 @@
+name: Freeze Executable
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+      
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - name: Freeze
+        run: |
+          uv install cxfreeze
+          uv run cxfreeze --script main.py --target-dir dist --target-name=ap_overlay
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }} Build
+          path: |
+            dist/*
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download a Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      - name: Zip artifacts for release
+        run: |
+          for i in */; do zip -r "${i%/}.zip" "$i"; done
+        working-directory: artifacts
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          name: Latest Commit
+          tag_name: latest-commit
+          body: ${{ github.event.head_commit.message }}
+          files: artifacts/*
+          
