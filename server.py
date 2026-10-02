@@ -1,16 +1,22 @@
 from collections import deque
 import threading
 import os
+import sys
 import time
 import json
 import platform
 from flask import Flask, Response, render_template, request
 
+if getattr(sys, "frozen", False):
+    base_dir = os.path.dirname(sys.executable)
+else:
+    base_dir = os.path.abspath(os.path.dirname(__file__))
+
 
 class App:
     def __init__(self):
         self.parent_pid = os.getppid()
-        self.app = Flask(__name__)
+        self.app = Flask(__name__, template_folder=os.path.join(base_dir, "templates"))
         self.new_message = threading.Condition()
         self.message_history = []
         self.subscribers = []
