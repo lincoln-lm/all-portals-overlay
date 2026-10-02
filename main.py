@@ -2,6 +2,7 @@ import argparse
 from datetime import datetime
 import json
 import pathlib
+import sys
 import requests
 
 
@@ -94,14 +95,17 @@ elif args.command == "solver":
     if args.from_backup:
         send(json.loads(args.from_backup.read_text()))
         send("solved")
-        exit(0)
+        sys.exit(0)
 
     if args.test:
         data = None
     else:
-        data = json.loads(
-            (pathlib.Path(__file__).parent / "strongholds.json").read_text()
-        )
+        if getattr(sys, "frozen", False):
+            strongholds_path = pathlib.Path(sys.executable).parent / "strongholds.json"
+        else:
+            strongholds_path = pathlib.Path(__file__).parent / "strongholds.json"
+
+        data = json.loads(strongholds_path.read_text())
 
     def callback(thread, path):
         message = {
