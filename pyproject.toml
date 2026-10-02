@@ -13,3 +13,13 @@ dependencies = [
     "pulp>=3.3.2",
     "requests>=2.34.2",
 ]
+
+[dependency-groups]
+dev = ["cx-freeze>=8.7.1"]
+
+[tool.cxfreeze]
+executables = [{ script = "main.py", target_name = "ap_overlay" }]
+
+[tool.cxfreeze.build_exe]
+build_exe = "dist"
+include_files = [["templates/", "templates/"]]
