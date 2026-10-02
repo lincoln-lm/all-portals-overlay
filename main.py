@@ -5,10 +5,6 @@ import pathlib
 import sys
 import requests
 
-
-from server import App
-from milp_solver import solve, STRONGHOLD_DATA
-
 parser = argparse.ArgumentParser()
 subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -73,6 +69,8 @@ elif args.command == "prev":
 elif args.command == "reset":
     send("reset")
 elif args.command == "ring":
+    from milp_solver import STRONGHOLD_DATA
+
     x = args.x
     z = args.z
     if args.chunk:
@@ -90,8 +88,12 @@ elif args.command == "ring":
         print("Stronghold not found in any ring")
 
 elif args.command == "server":
+    from server import App
+
     app = App()
 elif args.command == "solver":
+    from milp_solver import solve
+
     if args.from_backup:
         send(json.loads(args.from_backup.read_text()))
         send("solved")
