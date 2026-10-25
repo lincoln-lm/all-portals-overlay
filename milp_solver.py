@@ -1,3 +1,4 @@
+from copy import deepcopy
 import threading
 import itertools
 import math
@@ -39,7 +40,7 @@ class ComputeThread(threading.Thread):
     ):
         super().__init__(daemon=True)
         self.graph = nx.DiGraph()
-        self.original_measured_shs = measured_shs.copy()
+        self.original_measured_shs = deepcopy(measured_shs)
         self.player_count = player_count
         self.threads = threads
         self.time_limit = time_limit
@@ -162,7 +163,9 @@ class ComputeThread(threading.Thread):
 
         assert (
             2 <= self.minimum_path_length <= len(self.POINTS_IDX) // self.player_count
-        ), f"Minimum path length must be between 2 and {len(self.POINTS_IDX) // self.player_count}"
+        ), (
+            f"Minimum path length must be between 2 and {len(self.POINTS_IDX) // self.player_count}"
+        )
         assert self.minimum_path_length <= self.maximum_path_length
 
         # minimize $$\sum_{(i,j) \in A}c_{ij}(x_{ij}+y_{ij})$$
@@ -435,14 +438,16 @@ class ComputeThread(threading.Thread):
             node = next(base_path_iter, None)
             if node is None:
                 break
+            node_pos = self.pos(node)
             if node in (self.FIRST_RING_1, self.FIRST_RING_2):
-                path.append(["origin", node - 1])
+                path.append(["origin", node_pos[0], node_pos[1]])
             elif node == 0:
                 continue
             else:
-                path.append(["goto", node - 1])
+                path.append(["goto", node_pos[0], node_pos[1]])
             for assigned_node in assignments.get(node, []):
-                path.append(["reset", assigned_node - 1])
+                assigned_node_pos = self.pos(assigned_node)
+                path.append(["reset", assigned_node_pos[0], assigned_node_pos[1]])
         if self.callback is not None:
             self.callback(self, path)
         print(self)

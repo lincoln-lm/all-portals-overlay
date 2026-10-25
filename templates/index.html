@@ -25,16 +25,7 @@
         }
     </style>
     <script>
-        const STRONGHOLD_DATA = [
-            [3, 1280, 2816],
-            [6, 4352, 5888],
-            [10, 7424, 8960],
-            [15, 10496, 12032],
-            [21, 13568, 15104],
-            [28, 16640, 18176],
-            [36, 19712, 21248],
-            [10, 22784, 24320],
-        ];
+        const SCALE_FACTOR = 16;
         const scale = 125;
         const circles = [];
         const lines = [];
@@ -42,7 +33,7 @@
             circles.push(() => {
                 ctx.fillStyle = color;
                 ctx.beginPath();
-                ctx.arc(x / scale + 200, -y / scale + 200, size, 0, 2 * Math.PI);
+                ctx.arc(x * SCALE_FACTOR / scale + 200, -y * SCALE_FACTOR / scale + 200, size, 0, 2 * Math.PI);
                 ctx.fill();
             })
         }
@@ -51,8 +42,8 @@
                 ctx.strokeStyle = color;
                 ctx.lineWidth = width;
                 ctx.beginPath();
-                ctx.moveTo(x1 / scale + 200, -y1 / scale + 200);
-                ctx.lineTo(x2 / scale + 200, -y2 / scale + 200);
+                ctx.moveTo(x1 * SCALE_FACTOR / scale + 200, -y1 * SCALE_FACTOR / scale + 200);
+                ctx.lineTo(x2 * SCALE_FACTOR / scale + 200, -y2 * SCALE_FACTOR / scale + 200);
                 ctx.stroke();
             })
         }
@@ -60,7 +51,6 @@
         let PATHS = [];
         let canvas;
         let ctx;
-        let strongholds = [];
         let progress = 0;
 
         const drawStrongholds = () => {
@@ -74,21 +64,22 @@
                 const [x, y] = MEASURED[index];
                 drawStronghold(ctx, x, y, 4, '#ffffff7f');
             }
-            for (let index = 0; index < strongholds.length; index++) {
-                const [x, y] = strongholds[index];
-                drawStronghold(ctx, x, y, 4, '#ffffff7f');
+            for (let index = 0; index < PATHS.length; index++) {
+                for (let path_index = 0; path_index < PATHS[index].length; path_index++) {
+                    const [_, x, y] = PATHS[index][path_index]
+                    drawStronghold(ctx, x, y, 4, '#ffffff7f')
+                }
             }
             for (let path_index = 0; path_index < PATHS.length; path_index++) {
                 let path = PATHS[path_index];
                 if (path.length == 0) {
                     continue;
                 }
-                const [first_type, first_i] = path[0];
-                let last = first_i == 0 ? MEASURED[MEASURED.length - 2] : strongholds[first_i - 1];
+                const [first_type, x, y] = path[0];
+                let last = [x, y]
 
                 for (let index = 0; index < path.length; index++) {
-                    const [type, i] = path[index];
-                    const [x, y] = i == 0 ? MEASURED[MEASURED.length - 2] : strongholds[i - 1];
+                    const [type, x, y] = path[index];
                     const line_width = index == progress + 1 ? 2 : 1;
                     if (type != 'origin') {
                         drawPath(ctx, last[0], last[1], x, y, line_width, '#ffffff7f');
@@ -98,8 +89,7 @@
                     }
                 }
                 for (let test = progress; test < path.length && test >= 0; test--) {
-                    const [type, i] = path[test];
-                    const [x, y] = i == 0 ? MEASURED[MEASURED.length - 2] : strongholds[i - 1];
+                    const [type, x, y] = path[test];
                     if (type == 'goto') {
                         last = [x, y];
                         break;
@@ -107,8 +97,7 @@
                 }
                 // foreground
                 for (let index = progress; index < path.length; index++) {
-                    const [type, i] = path[index];
-                    const [x, y] = i == 0 ? MEASURED[MEASURED.length - 2] : strongholds[i - 1];
+                    const [type, x, y] = path[index];
                     const line_color = index == progress + 1 ? '#f28dff' : '#6e1c98';
                     const line_width = index == progress + 1 ? 4 : 3;
                     const stronghold_color = index == progress ? '#9e4cc8' : '#f28dff';
@@ -141,20 +130,18 @@
                 return "Complete!";
             }
 
-            const [type, i] = PATHS[0][progress + 1];
+            const [type, x, y] = PATHS[0][progress + 1];
             let previous_progress = progress;
-            let [last_type, last_i] = PATHS[0][previous_progress];
+            let [last_type, last_x, last_y] = PATHS[0][previous_progress];
             while (last_type == 'reset') {
                 previous_progress--;
-                [last_type, last_i] = PATHS[0][previous_progress];
+                [last_type, last_x, last_y] = PATHS[0][previous_progress];
             }
-            let [x, y] = i == 0 ? MEASURED[MEASURED.length - 2] : strongholds[i - 1];
-            let [last_x, last_y] = last_i == 0 ? MEASURED[MEASURED.length - 2] : strongholds[last_i - 1];
             if (type == 'origin') {
                 [last_x, last_y] = [0, 0];
             }
-            [x, y] = [Math.round(x / 128), Math.round(y / 128)];
-            [last_x, last_y] = [Math.round(last_x / 128), Math.round(last_y / 128)];
+            [x, y] = [Math.round(x * SCALE_FACTOR / 128), Math.round(y * SCALE_FACTOR / 128)];
+            [last_x, last_y] = [Math.round(last_x * SCALE_FACTOR / 128), Math.round(last_y * SCALE_FACTOR / 128)];
             let [deltaX, deltaZ] = [last_x - x, last_y - y];
 
             let theta = (Math.atan2(deltaZ, deltaX) * 180 / Math.PI + 90) % 360;
@@ -166,8 +153,7 @@
             }
             let message = '';
             if (progress < PATHS[0].length - 2) {
-                const [next_type, next_i] = PATHS[0][progress + 2];
-                const [next_x, next_y] = next_i == 0 ? MEASURED[MEASURED.length - 2] : strongholds[next_i - 1];
+                const [next_type, next_x, next_y] = PATHS[0][progress + 2];
                 if (next_type == 'origin') {
                     message = `Take bed and go to (${x}, ${y})\n(don't set spawn)\n${theta.toFixed(1)}`;
                 }
@@ -214,23 +200,10 @@
                     MEASURED = data.measured;
                     for (let i = 0; i < MEASURED.length; i++) {
                         const [x, y] = MEASURED[i];
-                        MEASURED[i] = [x * 16, y * 16];
+                        MEASURED[i] = [Math.round(x / SCALE_FACTOR), Math.round(y / SCALE_FACTOR)];
                     }
                     PATHS = data.paths;
 
-                    strongholds = [];
-                    for (let i = 0; i < STRONGHOLD_DATA.length; i++) {
-                        const [count, minimum, maximum] = STRONGHOLD_DATA[i];
-                        const [first_x, first_y] = MEASURED[i];
-                        const first_angle = Math.atan2(first_y, first_x);
-                        for (let stronghold = 1; stronghold < count; stronghold++) {
-                            let angle = first_angle + 2 * Math.PI / count * stronghold;
-                            let distance = (maximum + minimum) / 2;
-                            let x = Math.cos(angle) * distance;
-                            let y = Math.sin(angle) * distance;
-                            strongholds.push([x, y])
-                        }
-                    }
                     document.getElementById('text').textContent = data.message;
                     drawStrongholds();
                 } else if (data.type == "solved") {
@@ -238,7 +211,6 @@
                 } else if (data.type == "reset") {
                     MEASURED = [];
                     PATHS = [];
-                    strongholds = [];
                     progress = 0;
                     document.getElementById('text').textContent = "";
                     ctx.clearRect(0, 0, canvas.width, canvas.height);

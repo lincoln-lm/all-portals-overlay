@@ -2,3 +2,6 @@ __pycache__
 .venv
 strongholds.json
 backup_*.json
+all-portals-overlay.png
+*.egg-info
+.session*
