@@ -68,7 +68,7 @@ class App:
             except FileNotFoundError as e:
                 print(e, file=sys.stderr)
             finally:
-                time.sleep(5)
+                time.sleep(1)
 
     @staticmethod
     def get_overlay_png_encoded_string():

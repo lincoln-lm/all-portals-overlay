@@ -13,19 +13,18 @@ class SessionParser:
     strongholds: list
     paths: list
     current_stronghold: int | None
-    last_action: str
 
     def __init__(self):
         base_dir = get_base_dir()
         self.SESSION_FILE_PATH = base_dir / ".session"
-        self.reset_to_default(set_last_action=False)
+        self.reset_to_default()
 
     def parse_latest_session(self) -> tuple[bool, str | None]:
         text = self.SESSION_FILE_PATH.read_text()
         if len(text) == 0:
             return False, "Nothing in .session"
         sections = text.split(self.SEPARATOR)
-        if len(sections) != 5:
+        if len(sections) != 4:
             return False, "Not enough sections in .session"
         try:
             if len(sections[0]) != 0:
@@ -40,7 +39,6 @@ class SessionParser:
             if len(sections[2]) != 0:
                 self.current_stronghold = int(sections[2])
             self.message = sections[3]
-            self.last_action = sections[4]
         except json.JSONDecodeError as err:
             return False, err.msg
         return True, None
@@ -48,10 +46,6 @@ class SessionParser:
     def update_current_stronghold(self, add: int):
         if self.current_stronghold is None:
             return
-        if add > 0:
-            self.last_action = "next"
-        else:
-            self.last_action = "prev"
         self.current_stronghold += add
         self.current_stronghold = min(self.current_stronghold, 129)
         self.current_stronghold = max(self.current_stronghold, 8)
@@ -95,7 +89,7 @@ class SessionParser:
         backup_file_path = self.SESSION_FILE_PATH.with_name(file_name)
         backup_file_path.write_text(self.get_file_contents())
 
-    def get_file_contents(self):
+    def get_file_contents(self) -> str:
         return self.SEPARATOR.join(
             [
                 json.dumps(self.strongholds),
@@ -106,7 +100,6 @@ class SessionParser:
                     else ""
                 ),
                 self.message,
-                self.last_action,
             ]
         )
 
@@ -117,14 +110,9 @@ class SessionParser:
             and len(self.paths) == 0
             and self.current_stronghold is None
             and self.message == ""
-            and self.last_action == ""
         )
 
-    def reset_to_default(self, set_last_action=True):
-        if set_last_action:
-            self.last_action = "reset"
-        else:
-            self.last_action = ""
+    def reset_to_default(self):
         self.strongholds = [None] * len(STRONGHOLD_DATA)
         self.paths = []
         self.current_stronghold = None

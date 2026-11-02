@@ -3,6 +3,7 @@ import pathlib
 import shutil
 import sys
 from datetime import datetime
+import time
 
 from session import SessionParser
 from image import OverlayImageCreator
@@ -173,7 +174,6 @@ elif args.command == "solver":
         data = session_file_parser.strongholds
 
     def callback(thread, path):
-        session_file_parser.last_action = "path"
         session_file_parser.paths = [path]
         session_file_parser.message = (
             f"iteration: {thread.iteration}\n{thread.elapsed_time:.2f} seconds elapsed"
@@ -196,7 +196,9 @@ elif args.command == "solver":
         callback=callback,
     )
 
-    session_file_parser.last_action = "solved"
+    # Give a slight delay between update from the callback and this solved update for clients to render correctly.
+    time.sleep(0.25)
+
     session_file_parser.current_stronghold = 8
     session_file_parser.message = ""
     update_overlay_png()

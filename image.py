@@ -1,4 +1,6 @@
-from PIL import Image, ImageDraw, ImageFont
+import io
+
+from PIL import Image, ImageDraw
 import math
 from copy import deepcopy
 from milp_solver import SCALE_FACTOR
@@ -178,7 +180,7 @@ class OverlayImageCreator:
     def event_solved(self):
         self.update_progress(0)
 
-    def update_text(self, text):
+    def update_text(self, text: str):
         self.draw.rectangle([0, 400, 400, 500], fill=128)
 
         bbox = self.draw.multiline_textbbox(
