@@ -1,10 +1,10 @@
 import os
 import platform
-import sys
 import pathlib
 import json
 
 from milp_solver import STRONGHOLD_DATA
+from util import get_base_dir
 
 
 class SessionParser:
@@ -16,11 +16,8 @@ class SessionParser:
     last_action: str
 
     def __init__(self):
-        if getattr(sys, "frozen", False):
-            SESSION_FILE_PATH = pathlib.Path(sys.executable).parent / ".session"
-        else:
-            SESSION_FILE_PATH = pathlib.Path(__file__).parent / ".session"
-        self.SESSION_FILE_PATH = SESSION_FILE_PATH
+        base_dir = get_base_dir()
+        self.SESSION_FILE_PATH = base_dir / ".session"
         self.reset_to_default(set_last_action=False)
 
     def parse_latest_session(self) -> tuple[bool, str | None]:
@@ -75,10 +72,10 @@ class SessionParser:
         self.strongholds[ring - 1] = None
         return True, None
 
-    def sync_session(self):
+    def sync_session(self, wayevents=False):
         self.SESSION_FILE_PATH.write_text(self.get_file_contents())
         # Post an update for waywall
-        if platform.system() == "Linux":
+        if platform.system() == "Linux" and wayevents:
             home = os.getenv("HOME")
             if home is None:
                 print("Cannot infer $HOME.")

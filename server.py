@@ -3,29 +3,22 @@ import threading
 import os
 import sys
 import time
-import json
 import platform
+import base64
 from flask import Flask, Response, render_template
-from html2image import Html2Image
 
 from session import SessionParser
+from util import get_base_dir
 
-if getattr(sys, "frozen", False):
-    base_dir = os.path.dirname(sys.executable)
-else:
-    base_dir = os.path.abspath(os.path.dirname(__file__))
-
-hti = Html2Image(output_path=base_dir)
+base_dir = get_base_dir().resolve()
 
 
 class App:
     def __init__(self, session_file_parser: SessionParser):
         self.session_file_parser = session_file_parser
         self.parent_pid = os.getppid()
-        self.app = Flask(__name__, template_folder=os.path.join(base_dir, "templates"))
+        self.app = Flask(__name__, template_folder=base_dir / "templates")
         self.new_message = threading.Condition()
-        self.message_history = []
-        self.subscribers = []
         if platform.system() == "Linux":
             self.monitor_thread = threading.Thread(
                 target=self.monitor_parent, daemon=True
@@ -70,41 +63,25 @@ class App:
                                 print("Unknown error occurred", file=sys.stderr)
                             continue
 
-                        type_ = self.session_file_parser.last_action
-                        message = json.dumps(
-                            {
-                                "type": type_,
-                                "paths": self.session_file_parser.paths,
-                                "measured": self.session_file_parser.measured,
-                                "message": self.session_file_parser.message,
-                            }
-                        )
-                        self.message_history.append(message)
-                        if type_ is not None and type_ == "reset":
-                            self.message_history.clear()
-                        for subscriber in self.subscribers:
-                            subscriber.append(message)
                         last_mtime = current_mtime
                         self.new_message.notify_all()
             except FileNotFoundError as e:
-                print(e)
-                continue
-            time.sleep(5)
+                print(e, file=sys.stderr)
+            finally:
+                time.sleep(5)
+
+    @staticmethod
+    def get_overlay_png_encoded_string():
+        with open(base_dir / "all-portals-overlay.png", "rb") as file:
+            encoded_string = base64.b64encode(file.read()).decode("utf-8")
+        return encoded_string
 
     def event_stream(self):
-        subscriber_id = len(self.subscribers)
-        self.subscribers.append(deque())
-        if self.message_history:
-            with self.new_message:
-                self.subscribers[subscriber_id].extend(self.message_history)
-                self.new_message.notify_all()
-
         def stream():
             while True:
                 with self.new_message:
-                    for message in self.subscribers[subscriber_id]:
-                        yield f"data: {message}\n\n"
-                    self.subscribers[subscriber_id].clear()
+                    b64_img = self.get_overlay_png_encoded_string()
+                    yield f"data: data:image/png;base64,{b64_img}\n\n"
                     self.new_message.wait()
 
         return Response(stream(), mimetype="text/event-stream")

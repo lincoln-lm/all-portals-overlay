@@ -5,16 +5,18 @@ import sys
 from datetime import datetime
 
 from session import SessionParser
+from image import OverlayImageCreator
+from util import get_base_dir
 
 parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--wayevents", action="store_true", help="Post an update to wayevents (Linux only)"
+)
 subparsers = parser.add_subparsers(dest="command", required=True)
 
 subparsers.add_parser("next", help="Advance to the next stronghold in the path")
 subparsers.add_parser("prev", help="Go back to the previous stronghold in the path")
 subparsers.add_parser("reset", help="Reset the overlay")
-
-png_parser = subparsers.add_parser("save-png", help="Save the current image as a PNG")
-png_parser.add_argument("path", type=pathlib.Path, help="Path to save the PNG to")
 
 ring_parser = subparsers.add_parser("ring", help="Get the ring of a stronghold")
 ring_parser.add_argument("x", type=int, help="X coordinate of the stronghold")
@@ -83,10 +85,13 @@ restore_parser = subparsers.add_parser(
 restore_parser.add_argument("file_path", type=pathlib.Path, help="Path to backup file")
 
 args = parser.parse_args()
+base_dir = get_base_dir()
 
 session_file_parser = SessionParser()
 if not session_file_parser.SESSION_FILE_PATH.exists():
-    session_file_parser.sync_session()  # Creates a new .session and writes blank data
+    session_file_parser.sync_session(
+        args.wayevents
+    )  # Creates a new .session and writes blank data
 success, err = session_file_parser.parse_latest_session()
 if not success:
     if err is not None:
@@ -95,10 +100,26 @@ if not success:
         print("Unknown error", file=sys.stderr)
     sys.exit(0)
 
+creator = OverlayImageCreator(session_file_parser.SESSION_FILE_PATH.resolve())
+
+
+def update_overlay_png():
+    creator.event_path(
+        session_file_parser.strongholds,
+        session_file_parser.paths,
+        session_file_parser.message,
+    )
+    if session_file_parser.current_stronghold is not None:
+        creator.event_solved()
+        for i in range(session_file_parser.current_stronghold - 8):
+            creator.event_next()
+    creator.save_png(base_dir / "all-portals-overlay.png")
+
 
 def update_session_file(add):
     session_file_parser.update_current_stronghold(add)
-    session_file_parser.sync_session()
+    update_overlay_png()
+    session_file_parser.sync_session(args.wayevents)
 
 
 if args.command == "next":
@@ -110,23 +131,9 @@ elif args.command == "reset":
     backup_file_name = f".session-{timestamp}"
     session_file_parser.sync_to_backup(backup_file_name)
     session_file_parser.reset_to_default()
-    session_file_parser.sync_session()
+    update_overlay_png()
+    session_file_parser.sync_session(args.wayevents)
     print(f"Backup saved to {backup_file_name}. Restore with: restore <backup_file>")
-elif args.command == "save-png":
-    from image import OverlayImageCreator
-
-    creator = OverlayImageCreator(session_file_parser.SESSION_FILE_PATH.resolve())
-    current_stronghold = session_file_parser.current_stronghold
-    creator.event_path(
-        session_file_parser.strongholds,
-        session_file_parser.paths,
-        session_file_parser.message,
-    )
-    if current_stronghold is not None:
-        creator.event_solved()
-        for i in range(current_stronghold - 8):
-            creator.event_next()
-    creator.save_png(args.path)
 elif args.command == "ring":
     from milp_solver import STRONGHOLD_DATA
 
@@ -171,7 +178,8 @@ elif args.command == "solver":
         session_file_parser.message = (
             f"iteration: {thread.iteration}\n{thread.elapsed_time:.2f} seconds elapsed"
         )
-        session_file_parser.sync_session()
+        update_overlay_png()
+        session_file_parser.sync_session(args.wayevents)
 
     if data is not None and any(measurement is None for measurement in data):
         print(
@@ -191,7 +199,8 @@ elif args.command == "solver":
     session_file_parser.last_action = "solved"
     session_file_parser.current_stronghold = 8
     session_file_parser.message = ""
-    session_file_parser.sync_session()
+    update_overlay_png()
+    session_file_parser.sync_session(args.wayevents)
 elif args.command == "add-measurement":
     success, err = session_file_parser.add_or_update_measurement(
         args.ring, args.x, args.z
@@ -202,7 +211,7 @@ elif args.command == "add-measurement":
         else:
             print("Unknown error occurred", file=sys.stderr)
         sys.exit(0)
-    session_file_parser.sync_session()
+    session_file_parser.sync_session(args.wayevents)
 elif args.command == "remove-measurement":
     success, err = session_file_parser.remove_measurement(args.ring)
     if not success:
@@ -211,8 +220,8 @@ elif args.command == "remove-measurement":
         else:
             print("Unknown error occurred", file=sys.stderr)
         sys.exit(0)
-    session_file_parser.sync_session()
+    session_file_parser.sync_session(args.wayevents)
 elif args.command == "restore":
     shutil.copy(args.file_path, session_file_parser.SESSION_FILE_PATH)
     session_file_parser.parse_latest_session()
-    session_file_parser.sync_session()
+    session_file_parser.sync_session(args.wayevents)

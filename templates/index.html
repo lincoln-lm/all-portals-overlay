@@ -7,223 +7,28 @@
     <title>Document</title>
     <style>
         body {
-            color: white;
+            background-color: rgba(0, 0, 0, 0.5);
             margin: 0px auto;
             overflow: hidden;
-            font-family: Maple Mono;
-            font-size: 1.25em;
-            text-align: center;
-            text-shadow:
-                -1px -1px 0 #000,
-                1px -1px 0 #000,
-                -1px 1px 0 #000,
-                1px 1px 0 #000;
-        }
-
-        p {
-            margin: 0px;
         }
     </style>
     <script>
-        const SCALE_FACTOR = 16;
-        const scale = 125;
-        const circles = [];
-        const lines = [];
-        const drawStronghold = (ctx, x, y, size = 10, color = 'green') => {
-            circles.push(() => {
-                ctx.fillStyle = color;
-                ctx.beginPath();
-                ctx.arc(x * SCALE_FACTOR / scale + 200, -y * SCALE_FACTOR / scale + 200, size, 0, 2 * Math.PI);
-                ctx.fill();
-            })
-        }
-        const drawPath = (ctx, x1, y1, x2, y2, width = 1, color = 'green') => {
-            lines.push(() => {
-                ctx.strokeStyle = color;
-                ctx.lineWidth = width;
-                ctx.beginPath();
-                ctx.moveTo(x1 * SCALE_FACTOR / scale + 200, -y1 * SCALE_FACTOR / scale + 200);
-                ctx.lineTo(x2 * SCALE_FACTOR / scale + 200, -y2 * SCALE_FACTOR / scale + 200);
-                ctx.stroke();
-            })
-        }
-        let MEASURED = [];
-        let PATHS = [];
-        let canvas;
-        let ctx;
-        let progress = 0;
-
-        const drawStrongholds = () => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = `rgba(0, 0, 0, 0.5)`;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            lines.length = 0;
-            circles.length = 0;
-            // background
-            for (let index = 0; index < MEASURED.length; index++) {
-                const [x, y] = MEASURED[index];
-                drawStronghold(ctx, x, y, 4, '#ffffff7f');
-            }
-            for (let index = 0; index < PATHS.length; index++) {
-                for (let path_index = 0; path_index < PATHS[index].length; path_index++) {
-                    const [_, x, y] = PATHS[index][path_index]
-                    drawStronghold(ctx, x, y, 4, '#ffffff7f')
-                }
-            }
-            for (let path_index = 0; path_index < PATHS.length; path_index++) {
-                let path = PATHS[path_index];
-                if (path.length == 0) {
-                    continue;
-                }
-                const [first_type, x, y] = path[0];
-                let last = [x, y]
-
-                for (let index = 0; index < path.length; index++) {
-                    const [type, x, y] = path[index];
-                    const line_width = index == progress + 1 ? 2 : 1;
-                    if (type != 'origin') {
-                        drawPath(ctx, last[0], last[1], x, y, line_width, '#ffffff7f');
-                    }
-                    if (type != 'reset') {
-                        last = [x, y];
-                    }
-                }
-                for (let test = progress; test < path.length && test >= 0; test--) {
-                    const [type, x, y] = path[test];
-                    if (type == 'goto') {
-                        last = [x, y];
-                        break;
-                    }
-                }
-                // foreground
-                for (let index = progress; index < path.length; index++) {
-                    const [type, x, y] = path[index];
-                    const line_color = index == progress + 1 ? '#f28dff' : '#6e1c98';
-                    const line_width = index == progress + 1 ? 4 : 3;
-                    const stronghold_color = index == progress ? '#9e4cc8' : '#f28dff';
-                    let [from_x, from_y] = [x, y];
-                    if (type == 'goto') {
-                        drawPath(ctx, last[0], last[1], x, y, line_width, line_color);
-                    } else if (type == 'reset') {
-                        if (index == progress) {
-                            [from_x, from_y] = last;
-                        } else {
-                            drawPath(ctx, last[0], last[1], x, y, line_width, line_color);
-                        }
-                    }
-                    drawStronghold(ctx, from_x, from_y, 5, stronghold_color);
-                    if (type != 'reset') {
-                        last = [x, y];
-                    }
-                }
-            }
-            for (let i = 0; i < lines.length; i++) {
-                lines[i]();
-            }
-            for (let i = 0; i < circles.length; i++) {
-                circles[i]();
-            }
-        }
-
-        const nextAction = () => {
-            if (progress >= PATHS[0].length - 1) {
-                return "Complete!";
-            }
-
-            const [type, x, y] = PATHS[0][progress + 1];
-            let previous_progress = progress;
-            let [last_type, last_x, last_y] = PATHS[0][previous_progress];
-            while (last_type == 'reset') {
-                previous_progress--;
-                [last_type, last_x, last_y] = PATHS[0][previous_progress];
-            }
-            if (type == 'origin') {
-                [last_x, last_y] = [0, 0];
-            }
-            [x, y] = [Math.round(x * SCALE_FACTOR / 128), Math.round(y * SCALE_FACTOR / 128)];
-            [last_x, last_y] = [Math.round(last_x * SCALE_FACTOR / 128), Math.round(last_y * SCALE_FACTOR / 128)];
-            let [deltaX, deltaZ] = [last_x - x, last_y - y];
-
-            let theta = (Math.atan2(deltaZ, deltaX) * 180 / Math.PI + 90) % 360;
-            if (theta > 180) {
-                theta -= 360;
-            }
-            if (theta < -180) {
-                theta += 360;
-            }
-            let message = '';
-            if (progress < PATHS[0].length - 2) {
-                const [next_type, next_x, next_y] = PATHS[0][progress + 2];
-                if (next_type == 'origin') {
-                    message = `Take bed and go to (${x}, ${y})\n(don't set spawn)\n${theta.toFixed(1)}`;
-                }
-            }
-            if (message == '') {
-                if (type == 'goto') {
-                    message = `Take bed and go to (${x}, ${y})\n${theta.toFixed(1)}`;
-                } else if (type == 'reset') {
-                    message = `Leave bed and go to (${x}, ${y})\n${theta.toFixed(1)}`;
-                } else if (type == 'origin') {
-                    message = `Take bed and go to (${x}, ${y})\n${theta.toFixed(1)}`;
-                }
-                if (progress == PATHS[0].length - 2) {
-                    message += "\nDo not go through the fountain!";
-                }
-            }
-            return message;
-        }
-
-        const updateProgress = (add) => {
-            progress = progress + add;
-            if (progress >= PATHS[0].length) {
-                progress = PATHS[0].length - 1;
-            } else if (progress < 0) {
-                progress = 0;
-            }
-
-            document.getElementById('text').textContent = `${progress + 8}/129\n` + nextAction();
-            drawStrongholds();
-        }
-
-        window.addEventListener('load', () => {
-            canvas = document.getElementById('canvas');
-            ctx = canvas.getContext('2d');
-
+        window.addEventListener("load", () => {
+            const img = document.getElementById('overlay-img');
             const eventSource = new EventSource("/data");
             eventSource.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.type == "next") {
-                    updateProgress(1);
-                } else if (data.type == "prev") {
-                    updateProgress(-1);
-                } else if (data.type == "path") {
-                    MEASURED = data.measured;
-                    for (let i = 0; i < MEASURED.length; i++) {
-                        const [x, y] = MEASURED[i];
-                        MEASURED[i] = [Math.round(x / SCALE_FACTOR), Math.round(y / SCALE_FACTOR)];
-                    }
-                    PATHS = data.paths;
-
-                    document.getElementById('text').textContent = data.message;
-                    drawStrongholds();
-                } else if (data.type == "solved") {
-                    updateProgress(0);
-                } else if (data.type == "reset") {
-                    MEASURED = [];
-                    PATHS = [];
-                    progress = 0;
-                    document.getElementById('text').textContent = "";
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                const data = event.data;
+                if (data) {
+                    img.src = data;
                 }
-            }
-        });
+            };
+        })
     </script>
 </head>
 
 <body>
     <div id="all" style="width: 400px;">
-        <canvas width="400" height="400" id="canvas"></canvas>
-        <p style="white-space: pre" id="text"></p>
+        <img id="overlay-img" alt="Overlay PNG" />
     </div>
 </body>
 
