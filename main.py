@@ -1,4 +1,5 @@
 import argparse
+import os
 import pathlib
 import shutil
 import sys
@@ -105,6 +106,9 @@ creator = OverlayImageCreator(session_file_parser.SESSION_FILE_PATH.resolve())
 
 
 def update_overlay_png():
+    if session_file_parser.is_empty():
+        os.remove(base_dir / "all-portals-overlay.png")
+        return
     creator.event_path(
         session_file_parser.strongholds,
         session_file_parser.paths,
