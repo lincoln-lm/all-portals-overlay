@@ -231,4 +231,5 @@ elif args.command == "remove-measurement":
 elif args.command == "restore":
     shutil.copy(args.file_path, session_file_parser.SESSION_FILE_PATH)
     session_file_parser.parse_latest_session()
+    update_overlay_png()
     session_file_parser.sync_session(args.wayevents)
