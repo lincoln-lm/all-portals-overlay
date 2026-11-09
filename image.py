@@ -1,8 +1,6 @@
-import io
-
-from PIL import Image, ImageDraw
 import math
 from copy import deepcopy
+from PIL import Image, ImageDraw
 from milp_solver import SCALE_FACTOR
 
 IMG_SIZE = (400, 500)

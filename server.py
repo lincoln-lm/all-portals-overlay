@@ -1,4 +1,3 @@
-from collections import deque
 import threading
 import os
 import sys
