@@ -544,6 +544,9 @@ def solve(
 
     def draw_graph(_):
         """FuncAnimation function to constantly redraw the graph"""
+        if not compute_thread.is_alive():
+            plt.close(plt.gcf())
+            return
         graph = compute_thread.graph
         plt.gca().clear()
         edge_thickness = [graph[u][v].get("thickness", 1) for u, v in graph.edges]
