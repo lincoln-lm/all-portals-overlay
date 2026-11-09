@@ -4,7 +4,7 @@ from PIL import Image, ImageDraw, ImageFont
 from milp_solver import SCALE_FACTOR
 from util import get_base_dir
 
-IMG_SIZE = (400, 500)
+IMG_SIZE = (400, 550)
 
 
 class OverlayImageCreator:
@@ -139,6 +139,7 @@ class OverlayImageCreator:
             round(last_y * SCALE_FACTOR / 128),
         )
         delta_x, delta_y = last_x - x, last_y - y
+        dist = math.hypot(delta_x, delta_y)
 
         theta = (math.atan2(delta_y, delta_x) * 180 / math.pi + 90) % 360
         if theta > 180:
@@ -149,16 +150,14 @@ class OverlayImageCreator:
         if self.progress < len(self.PATHS[0]) - 2:
             next_type, _, _ = self.PATHS[0][self.progress + 2]
             if next_type == "origin":
-                message = (
-                    f"Take bed and go to ({x}, {y})\n(don't set spawn)\n{theta:.1f}"
-                )
+                message = f"Take bed and go to ({x}, {y})\n(don't set spawn)\nAngle: {theta:.1f}\nDistance: {dist:.0f}"
         if message == "":
             if type_ == "goto":
-                message = f"Take bed and go to ({x}, {y})\n{theta:.1f}"
+                message = f"Take bed and go to ({x}, {y})\nAngle: {theta:.1f}\nDistance: {dist:.0f}"
             elif type_ == "reset":
-                message = f"Leave bed and go to ({x}, {y})\n{theta:.1f}"
+                message = f"Leave bed and go to ({x}, {y})\nAngle: {theta:.1f}\nDistance: {dist:.0f}"
             elif type_ == "origin":
-                message = f"Take bed and go to ({x}, {y})\n{theta:.1f}"
+                message = f"Take bed and go to ({x}, {y})\nAngle: {theta:.1f}\nDistance: {dist:.0f}"
 
             if self.progress == len(self.PATHS[0]) - 2:
                 message += "\nDo not go through the fountain!"
@@ -204,7 +203,7 @@ class OverlayImageCreator:
             font = ImageFont.truetype(
                 get_base_dir() / self.config["font"], size=20, encoding="unic"
             )
-        self.draw.rectangle([0, 400, 400, 500], fill=128)
+        self.draw.rectangle([0, 400, 400, 550], fill=128)
 
         bbox = self.draw.multiline_textbbox(
             (0, 0),
@@ -217,7 +216,7 @@ class OverlayImageCreator:
         text_height = bbox[3] - bbox[1]
 
         x = (400 - text_width) // 2 - bbox[0]
-        y = 400 + (100 - text_height) // 2 - bbox[1]
+        y = 400 + (150 - text_height) // 2 - bbox[1]
 
         self.draw.multiline_text(
             (x, y), text, align="center", font=font, stroke_fill="white"
