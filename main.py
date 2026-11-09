@@ -17,7 +17,6 @@ parser.add_argument(
 )
 subparsers = parser.add_subparsers(dest="command", required=True)
 
-subparsers.add_parser("new", help="Delete the current session and overlay image")
 subparsers.add_parser("next", help="Advance to the next stronghold in the path")
 subparsers.add_parser("prev", help="Go back to the previous stronghold in the path")
 subparsers.add_parser("reset", help="Reset the overlay")
@@ -143,10 +142,7 @@ def update_session_file(add):
     session_file_parser.sync_session(args.wayevents)
 
 
-if args.command == "new":
-    (base_dir / "all-portals-overlay.png").unlink(missing_ok=True)
-    session_file_parser.SESSION_FILE_PATH.unlink(missing_ok=True)
-elif args.command == "next":
+if args.command == "next":
     update_session_file(1)
 elif args.command == "prev":
     update_session_file(-1)
