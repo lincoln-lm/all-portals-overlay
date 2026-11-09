@@ -195,9 +195,15 @@ class OverlayImageCreator:
         self.update_progress(0)
 
     def update_text(self, text: str):
-        font = ImageFont.truetype(
-            get_base_dir() / self.config["font"], size=20, encoding="unic"
-        )
+        if (
+            self.config["font"] == ""
+            or not (get_base_dir() / self.config["font"]).exists()
+        ):
+            font = ImageFont.load_default(20)
+        else:
+            font = ImageFont.truetype(
+                get_base_dir() / self.config["font"], size=20, encoding="unic"
+            )
         self.draw.rectangle([0, 400, 400, 500], fill=128)
 
         bbox = self.draw.multiline_textbbox(
