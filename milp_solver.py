@@ -10,7 +10,7 @@ import networkx as nx
 import numpy as np
 import pulp
 import highspy
-from .util import STRONGHOLD_DATA
+from util import STRONGHOLD_DATA
 
 SCALE_FACTOR = 16
 VERBOSE = True
