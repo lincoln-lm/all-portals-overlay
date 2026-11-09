@@ -1,0 +1,8 @@
+font = ""
+background = "#0000007f"
+completed_stronghold = "#ffffff7f"
+completed_path = "#ffffff7f"
+current_stronghold = "#9e4cc8ff"
+path = "#6e1c98ff"
+stronghold = "#f28dffff"
+next_path = "#f28dffff"

@@ -5,6 +5,7 @@ import shutil
 import sys
 from datetime import datetime
 import time
+import tomllib
 
 from session import SessionParser
 from image import OverlayImageCreator
@@ -97,7 +98,11 @@ if not success:
         print("Unknown error", file=sys.stderr)
     sys.exit(0)
 
-creator = OverlayImageCreator(session_file_parser.SESSION_FILE_PATH.resolve())
+if not (base_dir / "config.toml").exists():
+    shutil.copy(base_dir / "config.toml.example", base_dir / "config.toml")
+config = tomllib.loads((base_dir / "config.toml").read_text("utf-8"))
+
+creator = OverlayImageCreator(config, session_file_parser.SESSION_FILE_PATH.resolve())
 
 
 def update_overlay_png():

@@ -5,3 +5,5 @@ backup_*.json
 all-portals-overlay.png
 *.egg-info
 .session*
+config.toml
+*.ttf

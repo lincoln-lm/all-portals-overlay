@@ -1,15 +1,17 @@
 import math
 from copy import deepcopy
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from milp_solver import SCALE_FACTOR
+from util import get_base_dir
 
 IMG_SIZE = (400, 500)
 
 
 class OverlayImageCreator:
-    def __init__(self, save_path):
+    def __init__(self, config, save_path):
         self.lines = []
         self.circles = []
+        self.config = config
         self.save_path = save_path
         self.image = Image.new("RGBA", IMG_SIZE, 128)
         self.draw = ImageDraw.Draw(self.image)
@@ -50,32 +52,38 @@ class OverlayImageCreator:
         self.draw = ImageDraw.Draw(self.image)
         self.lines = []
         self.circles = []
-        for index in range(len(self.MEASURED)):
-            x, y = self.MEASURED[index]
-            self.draw_stronghold(x, y, 4, "#ffffff7f")
+        self.draw.rectangle([0, 0, 400, 400], fill=self.config["background"])
+        for index, (x, y) in enumerate(self.MEASURED):
+            self.draw_stronghold(x, y, 4, self.config["completed_stronghold"])
 
         for path in self.PATHS:
             for path_component in path:
                 _, x, y = path_component
-                self.draw_stronghold(x, y, 4, "#ffffff7f")
+                self.draw_stronghold(x, y, 4, self.config["completed_stronghold"])
 
-        for path_index in range(len(self.PATHS)):
-            path = self.PATHS[path_index]
+        for path in self.PATHS:
             if len(path) == 0:
                 continue
-            first_type, x, y = path[0]
+            _, x, y = path[0]
             last = [x, y]
-            for index in range(len(path)):
+            for index, (type_, x, y) in enumerate(path):
                 type_, x, y = path[index]
                 x, y = [x, y]
                 line_width = 2 if index == self.progress + 1 else 1
                 if type_ != "origin":
-                    self.draw_path(last[0], last[1], x, y, line_width, "#ffffff7f")
+                    self.draw_path(
+                        last[0],
+                        last[1],
+                        x,
+                        y,
+                        line_width,
+                        self.config["completed_path"],
+                    )
                 if type_ != "reset":
                     last = [x, y]
 
             test = self.progress
-            while test < len(path) and test >= 0:
+            while 0 <= test < len(path):
                 type_, x, y = path[test]
                 if type_ == "goto":
                     last = [x, y]
@@ -85,9 +93,17 @@ class OverlayImageCreator:
             index = self.progress
             while index < len(path):
                 type_, x, y = path[index]
-                line_color = "#f28dff" if index == self.progress + 1 else "#6e1c98"
+                line_color = (
+                    self.config["next_path"]
+                    if index == self.progress + 1
+                    else self.config["path"]
+                )
                 line_width = 4 if index == self.progress + 1 else 3
-                stronghold_color = "#9e4cc8" if index == self.progress else "#f28dff"
+                stronghold_color = (
+                    self.config["current_stronghold"]
+                    if index == self.progress
+                    else self.config["stronghold"]
+                )
                 from_x, from_y = x, y
                 if type_ == "goto":
                     self.draw_path(last[0], last[1], x, y, line_width, line_color)
@@ -100,10 +116,10 @@ class OverlayImageCreator:
                 if type_ != "reset":
                     last = [x, y]
                 index += 1
-        for i in range(len(self.lines)):
-            self.lines[i]()
-        for i in range(len(self.circles)):
-            self.circles[i]()
+        for line in self.lines:
+            line()
+        for circle in self.circles:
+            circle()
 
     def next_action(self):
         if self.progress >= len(self.PATHS[0]) - 1:
@@ -179,12 +195,15 @@ class OverlayImageCreator:
         self.update_progress(0)
 
     def update_text(self, text: str):
+        font = ImageFont.truetype(
+            get_base_dir() / self.config["font"], size=20, encoding="unic"
+        )
         self.draw.rectangle([0, 400, 400, 500], fill=128)
 
         bbox = self.draw.multiline_textbbox(
             (0, 0),
             text,
-            font_size=20,
+            font=font,
             align="center",
             stroke_width=0,
         )
@@ -195,7 +214,7 @@ class OverlayImageCreator:
         y = 400 + (100 - text_height) // 2 - bbox[1]
 
         self.draw.multiline_text(
-            (x, y), text, align="center", font_size=20, stroke_fill="white"
+            (x, y), text, align="center", font=font, stroke_fill="white"
         )
 
     def event_reset(self):
