@@ -8,7 +8,7 @@ import time
 
 from session import SessionParser
 from image import OverlayImageCreator
-from util import get_base_dir
+from util import get_base_dir, get_ring
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -60,12 +60,7 @@ solver_parser.add_argument(
 )
 
 add_measurement_parser = subparsers.add_parser(
-    "add-measurement", help="Add or update a particular ring's measurement"
-)
-add_measurement_parser.add_argument(
-    "ring",
-    type=int,
-    help="Ring number of the stronghold you are going to add",
+    "add", help="Add or update a particular ring's measurement"
 )
 add_measurement_parser.add_argument(
     "x", type=int, help="X coordinate of the measurement stronghold"
@@ -75,7 +70,7 @@ add_measurement_parser.add_argument(
 )
 
 remove_measurement_parser = subparsers.add_parser(
-    "remove-measurement", help="Remove a particular ring's measurement"
+    "remove", help="Remove a particular ring's measurement"
 )
 remove_measurement_parser.add_argument(
     "ring", type=int, help="Ring number of the stronghold you want to remove"
@@ -141,8 +136,6 @@ elif args.command == "reset":
     session_file_parser.sync_session(args.wayevents)
     print(f"Backup saved to {backup_file_name}. Restore with: restore <backup_file>")
 elif args.command == "ring":
-    from milp_solver import STRONGHOLD_DATA
-
     x = args.x
     z = args.z
     if args.chunk:
@@ -151,11 +144,9 @@ elif args.command == "ring":
     if args.nether:
         x *= 8
         z *= 8
-    distance = (x**2 + z**2) ** 0.5
-    for i, (_, min_distance, max_distance) in enumerate(STRONGHOLD_DATA, start=1):
-        if min_distance <= distance < max_distance:
-            print(i)
-            break
+    ring = get_ring(x, z)
+    if ring is not None:
+        print(ring)
     else:
         print("Stronghold not found in any ring")
 
@@ -207,10 +198,8 @@ elif args.command == "solver":
     session_file_parser.message = ""
     update_overlay_png()
     session_file_parser.sync_session(args.wayevents)
-elif args.command == "add-measurement":
-    success, err = session_file_parser.add_or_update_measurement(
-        args.ring, args.x, args.z
-    )
+elif args.command == "add":
+    success, err = session_file_parser.add_or_update_measurement(args.x, args.z)
     if not success:
         if err is not None:
             print(err, file=sys.stderr)
@@ -218,7 +207,7 @@ elif args.command == "add-measurement":
             print("Unknown error occurred", file=sys.stderr)
         sys.exit(0)
     session_file_parser.sync_session(args.wayevents)
-elif args.command == "remove-measurement":
+elif args.command == "remove":
     success, err = session_file_parser.remove_measurement(args.ring)
     if not success:
         if err is not None:

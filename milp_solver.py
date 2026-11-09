@@ -10,17 +10,8 @@ import networkx as nx
 import numpy as np
 import pulp
 import highspy
+from .util import STRONGHOLD_DATA
 
-STRONGHOLD_DATA = (
-    (3, 1280, 2816),
-    (6, 4352, 5888),
-    (10, 7424, 8960),
-    (15, 10496, 12032),
-    (21, 13568, 15104),
-    (28, 16640, 18176),
-    (36, 19712, 21248),
-    (10, 22784, 24320),
-)
 SCALE_FACTOR = 16
 VERBOSE = True
 

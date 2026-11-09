@@ -4,7 +4,7 @@ import pathlib
 import json
 
 from milp_solver import STRONGHOLD_DATA
-from util import get_base_dir
+from util import get_base_dir, get_ring
 
 
 class SessionParser:
@@ -50,11 +50,10 @@ class SessionParser:
         self.current_stronghold = min(self.current_stronghold, 129)
         self.current_stronghold = max(self.current_stronghold, 8)
 
-    def add_or_update_measurement(
-        self, ring: int, x: int, y: int
-    ) -> tuple[bool, str | None]:
-        if ring - 1 < 0 or ring - 1 >= len(self.strongholds):
-            return False, "ring is not within range [1, 8]"
+    def add_or_update_measurement(self, x: int, y: int) -> tuple[bool, str | None]:
+        ring = get_ring(x, y)
+        if ring is None:
+            return False, "Stronghold not found in any ring"
         self.strongholds[ring - 1] = [x, y]
         return True, None
 
