@@ -158,7 +158,7 @@ elif args.command == "ring":
 elif args.command == "server":
     from server import App
 
-    app = App(session_file_parser=session_file_parser)
+    app = App()
 elif args.command == "solver":
     from milp_solver import solve, generate_test_data
 
