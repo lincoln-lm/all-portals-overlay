@@ -164,7 +164,7 @@ elif args.command == "server":
 
     app = App(session_file_parser=session_file_parser)
 elif args.command == "solver":
-    from milp_solver import solve
+    from milp_solver import solve, generate_test_data
 
     if (
         session_file_parser.current_stronghold is not None
@@ -174,9 +174,8 @@ elif args.command == "solver":
         sys.exit(0)
 
     if args.test:
-        data = None
-    else:
-        data = session_file_parser.strongholds
+        session_file_parser.strongholds = generate_test_data()
+    data = session_file_parser.strongholds
 
     def callback(thread, path):
         session_file_parser.paths = [path]

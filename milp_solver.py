@@ -163,9 +163,7 @@ class ComputeThread(threading.Thread):
 
         assert (
             2 <= self.minimum_path_length <= len(self.POINTS_IDX) // self.player_count
-        ), (
-            f"Minimum path length must be between 2 and {len(self.POINTS_IDX) // self.player_count}"
-        )
+        ), f"Minimum path length must be between 2 and {len(self.POINTS_IDX) // self.player_count}"
         assert self.minimum_path_length <= self.maximum_path_length
 
         # minimize $$\sum_{(i,j) \in A}c_{ij}(x_{ij}+y_{ij})$$
@@ -497,47 +495,48 @@ class ComputeThread(threading.Thread):
         self.running = False
 
 
+def generate_test_data():
+    seed = np.random.randint(2**30)
+    np.random.seed(seed)
+    print(f"{seed=:08X}")
+
+    sh_rings = []
+    for count, minimum, maximum in STRONGHOLD_DATA:
+        first_angle = np.random.rand() * 2 * np.pi
+        ring = []
+        for sh in range(0, count):
+            angle = first_angle + 2 * np.pi * sh / count
+            # scale down to make things easier
+            distance = (maximum + minimum) / 2
+            x = np.cos(angle) * distance
+            y = np.sin(angle) * distance
+            ring.append([x, y])
+        sh_rings.append(ring)
+
+    # select the closest stronghold from the next ring to measure
+    measured_shs = [sh_rings[0].pop(0)]
+    for ring in sh_rings[1:]:
+        closest = 1 << 60, None
+        for sh in ring:
+            distance_squared = (measured_shs[-1][0] - sh[0]) ** 2 + (
+                measured_shs[-1][1] - sh[1]
+            ) ** 2
+            if distance_squared < closest[0]:
+                closest = distance_squared, sh
+        ring.remove(closest[1])
+        measured_shs.append(closest[1])
+    return measured_shs
+
+
 def solve(
-    data: list[tuple] | None,
+    data: list[tuple],
     threads: int,
     time_limit: int,
     player_count: int = 1,
     headless: bool = False,
     callback=None,
 ):
-    # generate test data
-    if data is None:
-        seed = np.random.randint(2**30)
-        np.random.seed(seed)
-        print(f"{seed=:08X}")
-
-        sh_rings = []
-        for count, minimum, maximum in STRONGHOLD_DATA:
-            first_angle = np.random.rand() * 2 * np.pi
-            ring = []
-            for sh in range(0, count):
-                angle = first_angle + 2 * np.pi * sh / count
-                # scale down to make things easier
-                distance = (maximum + minimum) / 2 / SCALE_FACTOR
-                x = np.cos(angle) * distance
-                y = np.sin(angle) * distance
-                ring.append((x, y))
-            sh_rings.append(ring)
-
-        # select the closest stronghold from the next ring to measure
-        measured_shs = [sh_rings[0].pop(0)]
-        for ring in sh_rings[1:]:
-            closest = 1 << 60, None
-            for sh in ring:
-                distance_squared = (measured_shs[-1][0] - sh[0]) ** 2 + (
-                    measured_shs[-1][1] - sh[1]
-                ) ** 2
-                if distance_squared < closest[0]:
-                    closest = distance_squared, sh
-            ring.remove(closest[1])
-            measured_shs.append(closest[1])
-    else:
-        measured_shs = [(sh[0] / SCALE_FACTOR, sh[1] / SCALE_FACTOR) for sh in data]
+    measured_shs = [(sh[0] / SCALE_FACTOR, sh[1] / SCALE_FACTOR) for sh in data]
 
     compute_thread = ComputeThread(
         measured_shs,
