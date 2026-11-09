@@ -70,6 +70,20 @@ add_measurement_parser.add_argument(
 add_measurement_parser.add_argument(
     "z", type=int, help="Z coordinate of the measurement stronghold"
 )
+add_measurement_parser.add_argument(
+    "-c",
+    "--chunk",
+    dest="chunk",
+    action="store_true",
+    help="Use chunk coordinates instead of block coordinates",
+)
+add_measurement_parser.add_argument(
+    "-n",
+    "--nether",
+    dest="nether",
+    action="store_true",
+    help="Use nether coordinates instead of overworld coordinates",
+)
 
 remove_measurement_parser = subparsers.add_parser(
     "remove", help="Remove a particular ring's measurement"
@@ -208,7 +222,14 @@ elif args.command == "solver":
     update_overlay_png()
     session_file_parser.sync_session(args.wayevents)
 elif args.command == "add":
-    success, err = session_file_parser.add_or_update_measurement(args.x, args.z)
+    x, z = args.x, args.z
+    if args.chunk:
+        x *= 16
+        z *= 16
+    if args.nether:
+        x *= 8
+        z *= 8
+    success, err = session_file_parser.add_or_update_measurement(x, z)
     if not success:
         if err is not None:
             print(err, file=sys.stderr)

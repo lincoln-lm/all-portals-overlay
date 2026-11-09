@@ -50,11 +50,11 @@ class SessionParser:
         self.current_stronghold = min(self.current_stronghold, 129)
         self.current_stronghold = max(self.current_stronghold, 8)
 
-    def add_or_update_measurement(self, x: int, y: int) -> tuple[bool, str | None]:
-        ring = get_ring(x, y)
+    def add_or_update_measurement(self, x: int, z: int) -> tuple[bool, str | None]:
+        ring = get_ring(x, z)
         if ring is None:
             return False, "Stronghold not found in any ring"
-        self.strongholds[ring - 1] = [x, y]
+        self.strongholds[ring - 1] = [x, z]
         return True, None
 
     def remove_measurement(self, ring: int) -> tuple[bool, str | None]:
