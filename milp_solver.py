@@ -1,3 +1,4 @@
+from copy import deepcopy
 import threading
 import itertools
 import math
@@ -9,17 +10,8 @@ import networkx as nx
 import numpy as np
 import pulp
 import highspy
+from util import STRONGHOLD_DATA
 
-STRONGHOLD_DATA = (
-    (3, 1280, 2816),
-    (6, 4352, 5888),
-    (10, 7424, 8960),
-    (15, 10496, 12032),
-    (21, 13568, 15104),
-    (28, 16640, 18176),
-    (36, 19712, 21248),
-    (10, 22784, 24320),
-)
 SCALE_FACTOR = 16
 VERBOSE = True
 
@@ -39,7 +31,7 @@ class ComputeThread(threading.Thread):
     ):
         super().__init__(daemon=True)
         self.graph = nx.DiGraph()
-        self.original_measured_shs = measured_shs.copy()
+        self.original_measured_shs = deepcopy(measured_shs)
         self.player_count = player_count
         self.threads = threads
         self.time_limit = time_limit
@@ -435,14 +427,16 @@ class ComputeThread(threading.Thread):
             node = next(base_path_iter, None)
             if node is None:
                 break
+            node_pos = self.pos(node)
             if node in (self.FIRST_RING_1, self.FIRST_RING_2):
-                path.append(["origin", node - 1])
+                path.append(["origin", node_pos[0], node_pos[1]])
             elif node == 0:
                 continue
             else:
-                path.append(["goto", node - 1])
+                path.append(["goto", node_pos[0], node_pos[1]])
             for assigned_node in assignments.get(node, []):
-                path.append(["reset", assigned_node - 1])
+                assigned_node_pos = self.pos(assigned_node)
+                path.append(["reset", assigned_node_pos[0], assigned_node_pos[1]])
         if self.callback is not None:
             self.callback(self, path)
         print(self)
@@ -492,47 +486,48 @@ class ComputeThread(threading.Thread):
         self.running = False
 
 
+def generate_test_data():
+    seed = np.random.randint(2**30)
+    np.random.seed(seed)
+    print(f"{seed=:08X}")
+
+    sh_rings = []
+    for count, minimum, maximum in STRONGHOLD_DATA:
+        first_angle = np.random.rand() * 2 * np.pi
+        ring = []
+        for sh in range(0, count):
+            angle = first_angle + 2 * np.pi * sh / count
+            # scale down to make things easier
+            distance = (maximum + minimum) / 2
+            x = np.cos(angle) * distance
+            y = np.sin(angle) * distance
+            ring.append([x, y])
+        sh_rings.append(ring)
+
+    # select the closest stronghold from the next ring to measure
+    measured_shs = [sh_rings[0].pop(0)]
+    for ring in sh_rings[1:]:
+        closest = 1 << 60, None
+        for sh in ring:
+            distance_squared = (measured_shs[-1][0] - sh[0]) ** 2 + (
+                measured_shs[-1][1] - sh[1]
+            ) ** 2
+            if distance_squared < closest[0]:
+                closest = distance_squared, sh
+        ring.remove(closest[1])
+        measured_shs.append(closest[1])
+    return measured_shs
+
+
 def solve(
-    data: list[tuple] | None,
+    data: list[tuple],
     threads: int,
     time_limit: int,
     player_count: int = 1,
     headless: bool = False,
     callback=None,
 ):
-    # generate test data
-    if data is None:
-        seed = np.random.randint(2**30)
-        np.random.seed(seed)
-        print(f"{seed=:08X}")
-
-        sh_rings = []
-        for count, minimum, maximum in STRONGHOLD_DATA:
-            first_angle = np.random.rand() * 2 * np.pi
-            ring = []
-            for sh in range(0, count):
-                angle = first_angle + 2 * np.pi * sh / count
-                # scale down to make things easier
-                distance = (maximum + minimum) / 2 / SCALE_FACTOR
-                x = np.cos(angle) * distance
-                y = np.sin(angle) * distance
-                ring.append((x, y))
-            sh_rings.append(ring)
-
-        # select the closest stronghold from the next ring to measure
-        measured_shs = [sh_rings[0].pop(0)]
-        for ring in sh_rings[1:]:
-            closest = 1 << 60, None
-            for sh in ring:
-                distance_squared = (measured_shs[-1][0] - sh[0]) ** 2 + (
-                    measured_shs[-1][1] - sh[1]
-                ) ** 2
-                if distance_squared < closest[0]:
-                    closest = distance_squared, sh
-            ring.remove(closest[1])
-            measured_shs.append(closest[1])
-    else:
-        measured_shs = [(sh[0] / SCALE_FACTOR, sh[1] / SCALE_FACTOR) for sh in data]
+    measured_shs = [(sh[0] / SCALE_FACTOR, sh[1] / SCALE_FACTOR) for sh in data]
 
     compute_thread = ComputeThread(
         measured_shs,
@@ -549,6 +544,9 @@ def solve(
 
     def draw_graph(_):
         """FuncAnimation function to constantly redraw the graph"""
+        if not compute_thread.is_alive():
+            plt.close(plt.gcf())
+            return
         graph = compute_thread.graph
         plt.gca().clear()
         edge_thickness = [graph[u][v].get("thickness", 1) for u, v in graph.edges]

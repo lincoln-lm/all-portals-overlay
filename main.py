@@ -1,11 +1,20 @@
 import argparse
-from datetime import datetime
-import json
+import os
 import pathlib
+import shutil
 import sys
-import requests
+from datetime import datetime
+import time
+import tomllib
+
+from session import SessionParser
+from image import OverlayImageCreator
+from util import get_base_dir, get_ring
 
 parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--wayevents", action="store_true", help="Post an update to wayevents (Linux only)"
+)
 subparsers = parser.add_subparsers(dest="command", required=True)
 
 subparsers.add_parser("next", help="Advance to the next stronghold in the path")
@@ -40,7 +49,9 @@ solver_parser.add_argument(
     "--time-limit", type=int, default=30000, help="Solver time limit in seconds"
 )
 solver_parser.add_argument(
-    "--test", action="store_true", help="Use test data instead of strongholds.json"
+    "--test",
+    action="store_true",
+    help="Use test data instead of strongholds in .session",
 )
 solver_parser.add_argument(
     "--player-count", type=int, default=1, help="Number of players"
@@ -48,29 +59,102 @@ solver_parser.add_argument(
 solver_parser.add_argument(
     "--headless", action="store_true", help="Run the solver without a GUI"
 )
-solver_parser.add_argument(
-    "--from-backup", type=pathlib.Path, default=None, help="Load from backup file"
+
+add_measurement_parser = subparsers.add_parser(
+    "add", help="Add or update a particular ring's measurement"
+)
+add_measurement_parser.add_argument(
+    "x", type=int, help="X coordinate of the measurement stronghold"
+)
+add_measurement_parser.add_argument(
+    "z", type=int, help="Z coordinate of the measurement stronghold"
+)
+add_measurement_parser.add_argument(
+    "-c",
+    "--chunk",
+    dest="chunk",
+    action="store_true",
+    help="Use chunk coordinates instead of block coordinates",
+)
+add_measurement_parser.add_argument(
+    "-n",
+    "--nether",
+    dest="nether",
+    action="store_true",
+    help="Use nether coordinates instead of overworld coordinates",
 )
 
+remove_measurement_parser = subparsers.add_parser(
+    "remove", help="Remove a particular ring's measurement"
+)
+remove_measurement_parser.add_argument(
+    "ring", type=int, help="Ring number of the stronghold you want to remove"
+)
+
+restore_parser = subparsers.add_parser(
+    "restore", help="Restore current session from a backup"
+)
+restore_parser.add_argument("file_path", type=pathlib.Path, help="Path to backup file")
 
 args = parser.parse_args()
+base_dir = get_base_dir()
+
+session_file_parser = SessionParser()
+if not session_file_parser.SESSION_FILE_PATH.exists():
+    session_file_parser.sync_session(
+        args.wayevents
+    )  # Creates a new .session and writes blank data
+success, err = session_file_parser.parse_latest_session()
+if not success:
+    if err is not None:
+        print(err, file=sys.stderr)
+    else:
+        print("Unknown error", file=sys.stderr)
+    sys.exit(0)
+
+if not (base_dir / "config.toml").exists():
+    shutil.copy(base_dir / "config.toml.example", base_dir / "config.toml")
+config = tomllib.loads((base_dir / "config.toml").read_text("utf-8"))
+
+creator = OverlayImageCreator(config, session_file_parser.SESSION_FILE_PATH.resolve())
 
 
-def send(data):
-    if isinstance(data, str):
-        data = {"message": json.dumps({"type": data})}
-    requests.post("http://localhost:5002/message", data=data, timeout=1)
+def update_overlay_png():
+    if session_file_parser.is_empty():
+        if os.path.isfile(base_dir / "all-portals-overlay.png"):
+            os.remove(base_dir / "all-portals-overlay.png")
+        return
+    creator.event_path(
+        session_file_parser.strongholds,
+        session_file_parser.paths,
+        session_file_parser.message,
+    )
+    if session_file_parser.current_stronghold is not None:
+        creator.event_solved()
+        for i in range(session_file_parser.current_stronghold - 8):
+            creator.event_next()
+    creator.save_png(base_dir / "all-portals-overlay.png")
+
+
+def update_session_file(add):
+    session_file_parser.update_current_stronghold(add)
+    update_overlay_png()
+    session_file_parser.sync_session(args.wayevents)
 
 
 if args.command == "next":
-    send("next")
+    update_session_file(1)
 elif args.command == "prev":
-    send("prev")
+    update_session_file(-1)
 elif args.command == "reset":
-    send("reset")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_file_name = f".session-{timestamp}"
+    session_file_parser.sync_to_backup(backup_file_name)
+    session_file_parser.reset_to_default()
+    update_overlay_png()
+    session_file_parser.sync_session(args.wayevents)
+    print(f"Backup saved to {backup_file_name}. Restore with: restore <backup_file>")
 elif args.command == "ring":
-    from milp_solver import STRONGHOLD_DATA
-
     x = args.x
     z = args.z
     if args.chunk:
@@ -79,11 +163,9 @@ elif args.command == "ring":
     if args.nether:
         x *= 8
         z *= 8
-    distance = (x**2 + z**2) ** 0.5
-    for i, (_, min_distance, max_distance) in enumerate(STRONGHOLD_DATA, start=1):
-        if min_distance <= distance < max_distance:
-            print(i)
-            break
+    ring = get_ring(x, z)
+    if ring is not None:
+        print(ring)
     else:
         print("Stronghold not found in any ring")
 
@@ -92,40 +174,33 @@ elif args.command == "server":
 
     app = App()
 elif args.command == "solver":
-    from milp_solver import solve
+    from milp_solver import solve, generate_test_data
 
-    if args.from_backup:
-        send(json.loads(args.from_backup.read_text()))
-        send("solved")
+    if (
+        session_file_parser.current_stronghold is not None
+        and session_file_parser.current_stronghold >= 8
+    ):
+        # Nothing to do because a solved session already exists.
         sys.exit(0)
 
     if args.test:
-        data = None
-    else:
-        if getattr(sys, "frozen", False):
-            strongholds_path = pathlib.Path(sys.executable).parent / "strongholds.json"
-        else:
-            strongholds_path = pathlib.Path(__file__).parent / "strongholds.json"
-
-        data = json.loads(strongholds_path.read_text())
+        session_file_parser.strongholds = generate_test_data()
+    data = session_file_parser.strongholds
 
     def callback(thread, path):
-        message = {
-            "message": json.dumps(
-                {
-                    "type": "path",
-                    "paths": [path],
-                    "measured": thread.original_measured_shs,
-                    "message": f"iteration: {thread.iteration}\n{thread.elapsed_time:.2f} seconds elapsed",
-                }
-            )
-        }
-        send(message)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        pathlib.Path(f"backup_{timestamp}.json").write_text(
-            json.dumps(message), "utf-8"
+        session_file_parser.paths = [path]
+        session_file_parser.message = (
+            f"iteration: {thread.iteration}\n{thread.elapsed_time:.2f} seconds elapsed"
         )
+        update_overlay_png()
+        session_file_parser.sync_session(args.wayevents)
 
+    if data is not None and any(measurement is None for measurement in data):
+        print(
+            "Not enough measured strongholds for solving. Add them with add-measurement",
+            file=sys.stderr,
+        )
+        sys.exit(0)
     solve(
         data,
         threads=args.threads,
@@ -135,4 +210,40 @@ elif args.command == "solver":
         callback=callback,
     )
 
-    send("solved")
+    # Give a slight delay between update from the callback and this solved update for clients to render correctly.
+    time.sleep(0.25)
+
+    session_file_parser.current_stronghold = 8
+    session_file_parser.message = ""
+    update_overlay_png()
+    session_file_parser.sync_session(args.wayevents)
+elif args.command == "add":
+    x, z = args.x, args.z
+    if args.chunk:
+        x *= 16
+        z *= 16
+    if args.nether:
+        x *= 8
+        z *= 8
+    success, err = session_file_parser.add_or_update_measurement(x, z)
+    if not success:
+        if err is not None:
+            print(err, file=sys.stderr)
+        else:
+            print("Unknown error occurred", file=sys.stderr)
+        sys.exit(0)
+    session_file_parser.sync_session(args.wayevents)
+elif args.command == "remove":
+    success, err = session_file_parser.remove_measurement(args.ring)
+    if not success:
+        if err is not None:
+            print(err, file=sys.stderr)
+        else:
+            print("Unknown error occurred", file=sys.stderr)
+        sys.exit(0)
+    session_file_parser.sync_session(args.wayevents)
+elif args.command == "restore":
+    shutil.copy(args.file_path, session_file_parser.SESSION_FILE_PATH)
+    session_file_parser.parse_latest_session()
+    update_overlay_png()
+    session_file_parser.sync_session(args.wayevents)
